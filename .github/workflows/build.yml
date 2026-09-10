@@ -8,7 +8,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm ci || npm install
-      - run: npx electron-builder --win nsis --x64
+      # ONE installer with x64 + arm64 inside — it auto-installs the right one
+      - run: npx electron-builder --win nsis --x64 --arm64
       - uses: actions/upload-artifact@v4
         with: { name: CouchKing-Windows, path: dist/*.exe }
   mac:
@@ -18,6 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm ci || npm install
-      - run: npx electron-builder --mac dmg zip
+      # universal = one download runs on Apple Silicon AND Intel Macs
+      - run: npx electron-builder --mac dmg --universal
       - uses: actions/upload-artifact@v4
-        with: { name: CouchKing-macOS, path: "dist/*.dmg\ndist/*.zip" }
+        with: { name: CouchKing-macOS, path: dist/*.dmg }
