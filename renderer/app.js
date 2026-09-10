@@ -35,12 +35,28 @@ async function bootstrap() {
     } catch {}
     const prof = (S.state.profiles || [])[0];
     S.user = prof?.name || S.email.split('@')[0];
-    $('who').textContent = S.user + (S.subKey ? '' : '  (no service on this account)');
+    $('prof-name').textContent = S.user;
+    $('prof-avatar').textContent = (S.state.profiles?.[0]?.avatar) || '👤';
+    $('set-email').textContent = S.email;
+    $('set-service').textContent = S.subKey ? 'Connected (' + S.subKey.slice(0, 8) + '…)' : 'None on this account';
     show('main'); home();
 }
 
+// rail navigation: pages live side by side, rail icon marks the active one
+let page = 'home';
+function nav(which) {
+    page = which;
+    document.querySelectorAll('.rail-item.nav').forEach(n => n.classList.toggle('on', n.dataset.nav === which));
+    for (const v of ['home', 'search', 'discover', 'library', 'settings', 'detail'])
+        $('view-' + v)?.classList.toggle('hidden', v !== which);
+    if (which === 'search') setTimeout(() => $('search').focus(), 50);
+    if (which === 'discover' && !$('discover-rows').childElementCount) discover();
+    if (which === 'library') library();
+}
 function show(which) {
-    for (const v of ['auth', 'main', 'detail']) $('view-' + v).classList.toggle('hidden', v !== which);
+    $('view-auth').classList.toggle('hidden', which !== 'auth');
+    $('shell').classList.toggle('hidden', which === 'auth');
+    if (which !== 'auth') nav('home');
 }
 
 // ---------- home ----------
@@ -52,9 +68,9 @@ function posterEl(t, pct) {
     d.onclick = () => detail(t);
     return d;
 }
-function addRow(label, items, progressOf) {
+function addRow(label, items, progressOf, holder) {
     if (!items?.length) return;
-    const rows = $('rows');
+    const rows = holder || document.querySelector('#view-home .rows');
     const l = document.createElement('div'); l.className = 'row-label'; l.textContent = label; rows.appendChild(l);
     const s = document.createElement('div'); s.className = 'strip';
     for (const t of items) s.appendChild(posterEl(t, progressOf ? progressOf(t) : 0));
@@ -69,7 +85,7 @@ async function tmdbRow(kind, path) {
     return out;
 }
 async function home() {
-    $('rows').innerHTML = '';
+    document.querySelector('#view-home .rows').innerHTML = '';
     const st = S.state.states?.[S.state.profiles?.[0]?.id] || S.state;
     const pos = st.positions || {};
     const pctOf = (t) => {
@@ -95,15 +111,16 @@ $('search').addEventListener('input', () => {
     clearTimeout(searchT);
     searchT = setTimeout(async () => {
         const q = $('search').value.trim();
-        if (!q) return home();
-        $('rows').innerHTML = '';
+        const holder = $('search-rows');
+        holder.innerHTML = '';
+        if (!q) return;
         const [m, s] = await Promise.all([
             j(`${CINE}/catalog/movie/top/search=${encodeURIComponent(q)}.json`),
             j(`${CINE}/catalog/series/top/search=${encodeURIComponent(q)}.json`)
         ]);
         const map = (d, ty) => (d?.metas || []).slice(0, 25).map(x => ({ id: x.id, type: ty, name: x.name, poster: x.poster }));
-        addRow('Movies', map(m, 'movie'));
-        addRow('Series', map(s, 'series'));
+        addRow('Movies', map(m, 'movie'), null, holder);
+        addRow('Series', map(s, 'series'), null, holder);
     }, 400);
 });
 
@@ -120,7 +137,7 @@ async function detail(t) {
     const meta = (await j(`${CINE}/meta/${t.type}/${imdb}.json`))?.meta;
     if (!meta) return;
     cur = { imdb, type: t.type, meta };
-    show('detail');
+    nav('detail');
     const b = $('detail-body');
     b.innerHTML = `<div class="d-head"><img src="${meta.poster || t.poster || ''}">
         <div><h2>${meta.name}</h2>
@@ -221,7 +238,7 @@ $('playing-stop').onclick = () => ck.stopPlay();
 // ---------- wiring ----------
 $('auth-signin').onclick = () => auth('signin');
 $('auth-signup').onclick = () => auth('signup');
-$('back').onclick = () => { show('main'); };
+$('back').onclick = () => { nav('home'); };
 $('signout').onclick = () => { localStorage.removeItem('ck'); location.reload(); };
 
 (async () => {
@@ -230,3 +247,26 @@ $('signout').onclick = () => { localStorage.removeItem('ck'); location.reload();
     if (saved?.token) { S.email = saved.email; S.token = saved.token; await bootstrap(); }
     else show('auth');
 })();
+
+
+// ---------- discover ----------
+async function discover() {
+    const h = $('discover-rows'); h.innerHTML = '';
+    addRow('New in Theaters', await tmdbRow('movie', 'movie/now_playing'), null, h);
+    addRow('Popular Movies', await tmdbRow('movie', 'movie/popular'), null, h);
+    addRow('Popular Series', await tmdbRow('tv', 'tv/popular'), null, h);
+    addRow('Certified Fresh', await tmdbRow('movie', 'discover/movie?vote_average.gte=7.4&vote_count.gte=300&sort_by=popularity.desc'), null, h);
+    addRow('Anime', await tmdbRow('tv', 'discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc'), null, h);
+}
+
+// ---------- library ----------
+function library() {
+    const h = $('library-rows'); h.innerHTML = '';
+    const st = S.state.states?.[S.state.profiles?.[0]?.id] || S.state;
+    addRow('My List', st.watchlist || [], null, h);
+    addRow('Watched', st.watchedTitles || [], null, h);
+    if (!h.childElementCount) h.innerHTML = '<p class="muted" style="padding-top:1rem">Nothing in your library yet — add shows and movies from their pages.</p>';
+}
+
+// ---------- rail ----------
+document.querySelectorAll('.rail-item.nav').forEach(n => n.onclick = () => nav(n.dataset.nav));

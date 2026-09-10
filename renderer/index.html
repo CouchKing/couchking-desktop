@@ -21,23 +21,48 @@
     </div>
   </section>
 
-  <!-- MAIN -->
-  <section id="view-main" class="view hidden">
-    <header>
-      <div class="brand"><span class="c1">Couch</span><span class="c2">King</span></div>
-      <input id="search" type="search" placeholder="Search movies & shows…">
-      <div class="spacer"></div>
-      <span id="who" class="muted"></span>
-      <button id="signout" class="ghost small">Sign out</button>
-    </header>
-    <main id="rows"></main>
-  </section>
+  <!-- SHELL: rail + content (Firestick layout, mouse-hover expand) -->
+  <div id="shell" class="hidden">
+    <nav id="rail">
+      <div class="rail-brand"><img src="../build/logo.png" onerror="this.style.display='none'"><span class="rail-label"><span class="c1">Couch</span><span class="c2">King</span></span></div>
+      <div id="rail-profile" class="rail-item"><span class="ricon" id="prof-avatar">👤</span><span class="rail-label" id="prof-name">Profile</span></div>
+      <div class="rail-item nav" data-nav="search"><span class="ricon">🔍</span><span class="rail-label">Search</span></div>
+      <div class="rail-item nav" data-nav="home"><span class="ricon">🏠</span><span class="rail-label">Home</span></div>
+      <div class="rail-item nav" data-nav="discover"><span class="ricon">🧭</span><span class="rail-label">Discover</span></div>
+      <div class="rail-item nav" data-nav="library"><span class="ricon">📚</span><span class="rail-label">Library</span></div>
+      <div class="rail-item nav" data-nav="settings"><span class="ricon">⚙️</span><span class="rail-label">Settings</span></div>
+    </nav>
 
-  <!-- DETAIL -->
-  <section id="view-detail" class="view hidden">
-    <button id="back" class="ghost small">‹ Back</button>
-    <div id="detail-body"></div>
-  </section>
+    <div id="content">
+      <section id="view-home" class="page"><main class="rows"></main></section>
+
+      <section id="view-search" class="page hidden">
+        <div class="page-pad">
+          <input id="search" type="search" placeholder="Search movies & shows…" autofocus>
+          <main class="rows" id="search-rows"></main>
+        </div>
+      </section>
+
+      <section id="view-discover" class="page hidden"><main class="rows" id="discover-rows"></main></section>
+
+      <section id="view-library" class="page hidden"><main class="rows" id="library-rows"></main></section>
+
+      <section id="view-settings" class="page hidden">
+        <div class="page-pad">
+          <h2>Settings</h2>
+          <div class="set-card"><b>Account</b><span id="set-email" class="muted"></span></div>
+          <div class="set-card"><b>Service</b><span id="set-service" class="muted"></span></div>
+          <div class="set-card"><b>Version</b><span class="muted">CouchKing Desktop 0.2</span></div>
+          <button id="signout" class="ghost">Sign out</button>
+        </div>
+      </section>
+
+      <section id="view-detail" class="page hidden">
+        <button id="back" class="ghost small">‹ Back</button>
+        <div id="detail-body"></div>
+      </section>
+    </div>
+  </div>
 
   <!-- NOW PLAYING banner -->
   <div id="playing" class="hidden">
