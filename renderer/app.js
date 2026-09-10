@@ -33,10 +33,13 @@ async function bootstrap() {
         const seg = decodeURIComponent(new URL(S.addons[0].url).pathname.split('/')[1]);
         S.subKey = JSON.parse(seg).subKey || '';
     } catch {}
-    const prof = (S.state.profiles || [])[0];
+    const savedPid = localStorage.getItem('ck-pid');
+    const profs = S.state.profiles || [];
+    S.pid = profs.find(p => p.id === savedPid)?.id || profs[0]?.id || '';
+    const prof = profs.find(p => p.id === S.pid);
     S.user = prof?.name || S.email.split('@')[0];
     $('prof-name').textContent = S.user;
-    $('prof-avatar').textContent = (S.state.profiles?.[0]?.avatar) || '👤';
+    $('prof-avatar').textContent = (S.state.profiles || []).find(p => p.id === S.pid)?.avatar || '👤';
     $('set-email').textContent = S.email;
     $('set-service').textContent = S.subKey ? 'Connected (' + S.subKey.slice(0, 8) + '…)' : 'None on this account';
     show('main'); home();
@@ -52,6 +55,7 @@ function nav(which) {
     if (which === 'search') setTimeout(() => $('search').focus(), 50);
     if (which === 'discover' && !$('discover-rows').childElementCount) discover();
     if (which === 'library') library();
+    if (which === 'settings') renderSettings();
 }
 function show(which) {
     $('view-auth').classList.toggle('hidden', which !== 'auth');
@@ -86,7 +90,7 @@ async function tmdbRow(kind, path) {
 }
 async function home() {
     document.querySelector('#view-home .rows').innerHTML = '';
-    const st = S.state.states?.[S.state.profiles?.[0]?.id] || S.state;
+    const st = pstate();
     const pos = st.positions || {};
     const pctOf = (t) => {
         let best = 0;
@@ -143,9 +147,22 @@ async function detail(t) {
         <div><h2>${meta.name}</h2>
         <div class="d-meta">${meta.year || ''} · ${meta.runtime || ''} · ⭐ ${meta.imdbRating || '—'}</div>
         <div class="d-desc">${meta.description || ''}</div>
-        ${t.type === 'movie' ? '<br><button class="primary" id="d-play">▶ Play</button>' : ''}
+        <div style="display:flex;gap:.6rem;margin-top:.9rem">
+          ${t.type === 'movie' ? '<button class="primary" id="d-play">▶ Play</button>' : ''}
+          <button class="ghost" id="d-list"></button>
+          <button class="ghost" id="d-watched"></button>
+        </div>
         </div></div>
         <div id="d-eps"></div><div id="d-streams" class="streams"></div>`;
+    const tt = { id: imdb, type: t.type, name: meta.name, poster: meta.poster || t.poster || '' };
+    const paintBtns = () => {
+        const st = pstate();
+        $('d-list').textContent = (st.watchlist || []).some(x => x.id === imdb) ? '✓ In My List' : '+ My List';
+        $('d-watched').textContent = (st.watchedIds || []).includes(imdb) ? '✓ Watched' : 'Mark watched';
+    };
+    $('d-list').onclick = () => { toggleList(tt); paintBtns(); };
+    $('d-watched').onclick = () => { toggleWatchedTitle(tt); paintBtns(); };
+    paintBtns();
     if (t.type === 'movie') $('d-play').onclick = () => pickStream(imdb, meta.name);
     else seasons(meta);
 }
@@ -156,7 +173,7 @@ function seasons(meta) {
     const tabs = document.createElement('div'); tabs.className = 'season-tabs';
     const list = document.createElement('div');
     holder.replaceChildren(tabs, list);
-    const st = S.state.states?.[S.state.profiles?.[0]?.id] || S.state;
+    const st = pstate();
     const pos = st.positions || {};
     const paint = (sn) => {
         [...tabs.children].forEach(c => c.classList.toggle('on', +c.dataset.s === sn));
@@ -182,7 +199,7 @@ function seasons(meta) {
 }
 
 // ---------- streams + play ----------
-async function pickStream(sid, label) {
+async function pickStream(sid, label, autoFirst = false) {
     const holder = $('d-streams');
     holder.innerHTML = '<div class="muted">Finding streams…</div>';
     if (!S.addons.length) { holder.innerHTML = '<div class="err">No service on this account.</div>'; return; }
@@ -191,6 +208,7 @@ async function pickStream(sid, label) {
     const d = await j(`${base}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
     const streams = d?.streams || [];
     if (!streams.length) { holder.innerHTML = '<div class="muted">Getting this ready — try again in a minute.</div>'; return; }
+    if (autoFirst && streams[0]) { play(streams[0].url, label, sid); return; }
     holder.innerHTML = '<div class="row-label">Streams</div>';
     for (const st of streams) {
         const el = document.createElement('div'); el.className = 'stream';
@@ -215,7 +233,7 @@ async function play(url, label, sid) {
     playing = { sid, imdb, s, e, label, pos: 0, dur: 0 };
     $('playing-title').textContent = label;
     $('playing').classList.remove('hidden');
-    await ck.play({ url, title: label, startSec });
+    await ck.play({ url, title: label, startSec, subScale: PREF('subscale', 1.0) });
 }
 ck.onMpvPos(({ pos, dur }) => {
     if (!playing) return;
@@ -231,6 +249,14 @@ ck.onMpvExit(async ({ pos, dur }) => {
         k: S.subKey, u: S.user, i: p.imdb, s: p.s || '', e: p.e || '',
         pos: Math.floor(pos * 1000), dur: Math.floor(dur * 1000) } });
     S.state = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`) || S.state;
+    // AUTOPLAY NEXT: finished a series episode (>=92%) with the setting on → roll the next one
+    if (PREF('autonext', true) && p.s && pos / dur >= 0.92 && cur?.meta?.videos) {
+        const eps = cur.meta.videos.filter(v => v.season > 0).sort((a, b) => a.season - b.season || a.episode - b.episode);
+        const i = eps.findIndex(x => x.season == p.s && x.episode == p.e);
+        const nxt = eps[i + 1];
+        if (nxt && (!nxt.released || new Date(nxt.released) <= new Date()))
+            pickStream(`${p.imdb}:${nxt.season}:${nxt.episode}`, `${cur.meta.name} S${nxt.season}E${nxt.episode}`, true);
+    }
 });
 const fmt = (s) => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(s % 60).padStart(2, '0'); };
 $('playing-stop').onclick = () => ck.stopPlay();
@@ -260,13 +286,109 @@ async function discover() {
 }
 
 // ---------- library ----------
+let libType = 'All', libSort = 'Recent';
 function library() {
     const h = $('library-rows'); h.innerHTML = '';
-    const st = S.state.states?.[S.state.profiles?.[0]?.id] || S.state;
-    addRow('My List', st.watchlist || [], null, h);
-    addRow('Watched', st.watchedTitles || [], null, h);
-    if (!h.childElementCount) h.innerHTML = '<p class="muted" style="padding-top:1rem">Nothing in your library yet — add shows and movies from their pages.</p>';
+    const st = pstate();
+    // filter + sort bar (same options as the TV app's Library)
+    const bar = document.createElement('div'); bar.className = 'season-tabs';
+    for (const t of ['All', 'Movies', 'Shows']) {
+        const b = document.createElement('button'); b.className = 'ghost small' + (libType === t ? ' on' : '');
+        b.textContent = t; b.onclick = () => { libType = t; library(); };
+        bar.appendChild(b);
+    }
+    const sp = document.createElement('span'); sp.style.width = '1rem'; bar.appendChild(sp);
+    for (const t of ['Recent', 'A-Z']) {
+        const b = document.createElement('button'); b.className = 'ghost small' + (libSort === t ? ' on' : '');
+        b.textContent = t; b.onclick = () => { libSort = t; library(); };
+        bar.appendChild(b);
+    }
+    h.appendChild(bar);
+    const fil = (l) => (l || []).filter(x => libType === 'All' || (libType === 'Movies' ? x.type !== 'series' : x.type === 'series'));
+    const srt = (l) => libSort === 'A-Z' ? [...l].sort((a, b) => (a.name || '').localeCompare(b.name || '')) : l;
+    addRow('My List', srt(fil(st.watchlist)), null, h);
+    addRow('Watched', srt(fil(st.watchedTitles)), null, h);
+    if (h.childElementCount <= 1) h.insertAdjacentHTML('beforeend', '<p class="muted" style="padding-top:1rem">Nothing in your library yet — add shows and movies from their pages.</p>');
 }
 
 // ---------- rail ----------
 document.querySelectorAll('.rail-item.nav').forEach(n => n.onclick = () => nav(n.dataset.nav));
+
+
+// ---------- active profile ----------
+function pstate() { return S.state.states?.[S.pid] || S.state; }
+$('rail-profile').onclick = () => {
+    const profs = S.state.profiles || [];
+    if (profs.length < 2) return;
+    // simple picker: cycle is annoying — show a chooser overlay
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:#000A;display:flex;align-items:center;justify-content:center;z-index:50';
+    const card = document.createElement('div');
+    card.style.cssText = 'background:var(--card);border-radius:16px;padding:1.4rem;display:flex;gap:1rem';
+    for (const p of profs) {
+        const b = document.createElement('button'); b.className = p.id === S.pid ? 'primary' : 'ghost';
+        b.textContent = (p.avatar || '👤') + '  ' + p.name;
+        b.onclick = () => {
+            S.pid = p.id; S.user = p.name; localStorage.setItem('ck-pid', p.id);
+            $('prof-name').textContent = p.name; $('prof-avatar').textContent = p.avatar || '👤';
+            ov.remove(); home(); if (page === 'library') library();
+        };
+        card.appendChild(b);
+    }
+    ov.appendChild(card); ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    document.body.appendChild(ov);
+};
+
+// ---------- account write-back (server MERGES, so partial pushes are safe) ----------
+async function pushAccount() {
+    await j(`${SERVICE}/tvapp/state`, { method: 'POST', body: { email: S.email, token: S.token, appVer: 'desktop-0.3', state: S.state } });
+}
+function stamp(map, id) { const m = map || {}; m[id] = Date.now(); return m; }
+function toggleList(t) {
+    const st = pstate(); st.watchlist = st.watchlist || [];
+    const has = st.watchlist.some(x => x.id === t.id);
+    if (has) { st.watchlist = st.watchlist.filter(x => x.id !== t.id); st.removedTs = stamp(st.removedTs, t.id); }
+    else { st.watchlist.unshift({ id: t.id, type: t.type, name: t.name, poster: t.poster || '' }); st.addedTs = stamp(st.addedTs, t.id); }
+    pushAccount(); return !has;
+}
+function toggleWatchedTitle(t) {
+    const st = pstate(); st.watchedIds = st.watchedIds || []; st.watchedTitles = st.watchedTitles || [];
+    const has = st.watchedIds.includes(t.id);
+    if (has) { st.watchedIds = st.watchedIds.filter(x => x !== t.id); st.watchedTitles = st.watchedTitles.filter(x => x.id !== t.id); st.removedTs = stamp(st.removedTs, t.id); }
+    else { st.watchedIds.push(t.id); st.watchedTitles.unshift({ id: t.id, type: t.type, name: t.name, poster: t.poster || '' }); st.addedTs = stamp(st.addedTs, t.id); }
+    pushAccount(); return !has;
+}
+
+// ---------- settings that DO something ----------
+const PREF = (k, d) => JSON.parse(localStorage.getItem('ckp-' + k) ?? JSON.stringify(d));
+const SETPREF = (k, v) => localStorage.setItem('ckp-' + k, JSON.stringify(v));
+function renderSettings() {
+    const holder = $('settings-extra'); if (!holder) return;
+    holder.innerHTML = '';
+    const rows = [
+        ['Autoplay next episode', 'autonext', true],
+        ['Subtitle size', 'subscale', 1.0, [['Small', .8], ['Normal', 1.0], ['Large', 1.3], ['Giant', 1.7]]],
+    ];
+    for (const [label, key, dflt, opts] of rows) {
+        const card = document.createElement('div'); card.className = 'set-card';
+        const cur = PREF(key, dflt);
+        if (!opts) {
+            card.innerHTML = `<b>${label}</b>`;
+            const b = document.createElement('button'); b.className = cur ? 'primary small' : 'ghost small';
+            b.textContent = cur ? 'On' : 'Off';
+            b.onclick = () => { SETPREF(key, !PREF(key, dflt)); renderSettings(); };
+            card.appendChild(b);
+        } else {
+            card.innerHTML = `<b>${label}</b>`;
+            const wrap = document.createElement('div');
+            for (const [name, val] of opts) {
+                const b = document.createElement('button'); b.className = (cur === val ? 'primary' : 'ghost') + ' small';
+                b.style.marginLeft = '.4rem'; b.textContent = name;
+                b.onclick = () => { SETPREF(key, val); renderSettings(); };
+                wrap.appendChild(b);
+            }
+            card.appendChild(wrap);
+        }
+        holder.appendChild(card);
+    }
+}
