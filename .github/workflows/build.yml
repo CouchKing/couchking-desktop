@@ -1,0 +1,23 @@
+name: Build installers
+on: { push: { branches: [master, main] }, workflow_dispatch: {} }
+jobs:
+  win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci || npm install
+      - run: npx electron-builder --win nsis --x64
+      - uses: actions/upload-artifact@v4
+        with: { name: CouchKing-Windows, path: dist/*.exe }
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci || npm install
+      - run: npx electron-builder --mac dmg zip
+      - uses: actions/upload-artifact@v4
+        with: { name: CouchKing-macOS, path: "dist/*.dmg\ndist/*.zip" }

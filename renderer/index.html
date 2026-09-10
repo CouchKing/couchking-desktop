@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CouchKing</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- SIGN IN -->
+  <section id="view-auth" class="view">
+    <div class="auth-card">
+      <h1><span class="c1">Couch</span><span class="c2">King</span></h1>
+      <p class="muted">One account, every device — your watchlist and history sync.</p>
+      <input id="auth-email" type="email" placeholder="Email" autocomplete="username">
+      <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password">
+      <div id="auth-error" class="err"></div>
+      <button id="auth-signin" class="primary">Sign in</button>
+      <button id="auth-signup" class="ghost">Create account</button>
+    </div>
+  </section>
+
+  <!-- MAIN -->
+  <section id="view-main" class="view hidden">
+    <header>
+      <div class="brand"><span class="c1">Couch</span><span class="c2">King</span></div>
+      <input id="search" type="search" placeholder="Search movies & shows…">
+      <div class="spacer"></div>
+      <span id="who" class="muted"></span>
+      <button id="signout" class="ghost small">Sign out</button>
+    </header>
+    <main id="rows"></main>
+  </section>
+
+  <!-- DETAIL -->
+  <section id="view-detail" class="view hidden">
+    <button id="back" class="ghost small">‹ Back</button>
+    <div id="detail-body"></div>
+  </section>
+
+  <!-- NOW PLAYING banner -->
+  <div id="playing" class="hidden">
+    <span id="playing-title"></span>
+    <span id="playing-pos" class="muted"></span>
+    <button id="playing-stop" class="ghost small">Stop</button>
+  </div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
