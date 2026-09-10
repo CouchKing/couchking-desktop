@@ -17,6 +17,7 @@ input:focus { border-color:var(--accent); }
 #view-auth { min-height:100vh; display:flex; align-items:center; justify-content:center; }
 .auth-card { width:360px; display:flex; flex-direction:column; gap:.8rem; text-align:center; }
 .auth-card h1 { font-size:2.4rem; font-weight:900; }
+.auth-logo { width:96px; height:96px; object-fit:contain; margin:0 auto .4rem; }
 
 /* ---- shell: Firestick-style rail, mouse-hover expands (icons stay, words slide in) ---- */
 #shell { display:flex; height:100vh; }
