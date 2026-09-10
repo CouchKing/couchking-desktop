@@ -80,13 +80,67 @@ function addRow(label, items, progressOf, holder) {
     for (const t of items) s.appendChild(posterEl(t, progressOf ? progressOf(t) : 0));
     rows.appendChild(s);
 }
-async function tmdbRow(kind, path) {
-    const d = await j(`https://api.themoviedb.org/3/${path}${path.includes('?') ? '&' : '?'}api_key=${TMDB}`);
-    const out = [];
-    for (const r of (d?.results || []).slice(0, 30)) {
-        out.push({ tmdb: r.id, type: kind === 'tv' ? 'series' : 'movie', name: r.title || r.name, poster: IMG(r.poster_path) });
+async function tmdbRow(kind, path, pages = 3) {
+    const reqs = [];
+    for (let p = 1; p <= pages; p++)
+        reqs.push(j(`https://api.themoviedb.org/3/${path}${path.includes('?') ? '&' : '?'}api_key=${TMDB}&page=${p}`));
+    const seen = new Set(); const out = [];
+    for (const d of await Promise.all(reqs))
+        for (const r of (d?.results || [])) {
+            if (seen.has(r.id)) continue; seen.add(r.id);
+            out.push({ tmdb: r.id, type: kind === 'tv' ? 'series' : 'movie', name: r.title || r.name, poster: IMG(r.poster_path) });
+        }
+    return out.slice(0, 60);
+}
+async function cineRow(type, id, genre, pages = 1) {
+    const reqs = [];
+    for (let p = 0; p < pages; p++) {
+        const g = genre ? `/genre=${encodeURIComponent(genre)}` : '';
+        const sk = p ? `${genre ? '&' : '/'}skip=${p * 100}`.replace('&skip', genre ? '&skip' : '/skip') : '';
+        reqs.push(j(`${CINE}/catalog/${type}/${id}${g}${p ? (genre ? '&skip=' + p * 100 : '/skip=' + p * 100) : ''}.json`));
     }
+    const out = []; const seen = new Set();
+    for (const d of await Promise.all(reqs))
+        for (const m of (d?.metas || [])) {
+            if (seen.has(m.id)) continue; seen.add(m.id);
+            out.push({ id: m.id, type, name: m.name, poster: m.poster });
+        }
+    return out.slice(0, 60);
+}
+async function idsRow(type, ids) {
+    const metas = await Promise.all(ids.map(id =>
+        j(`${CINE}/meta/movie/${id}.json`).then(d => d?.meta || j(`${CINE}/meta/series/${id}.json`).then(x => x?.meta))));
+    const out = [];
+    for (const m of metas) if (m) out.push({ id: m.id, type: m.type || type, name: m.name, poster: m.poster });
     return out;
+}
+async function rowItems(r) {
+    if (r.ids) return idsRow(r.type, r.ids);
+    if (r.tmdb) return tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb);
+    return cineRow(r.type, r.cine, r.genre, 2);
+}
+// For You — SAME consensus ranking as the TV app (votes across your watched/library seeds)
+async function forYouRow(kind) {
+    const st = pstate();
+    const lib = [...(st.continue || []), ...(st.watchlist || []), ...(st.watchedTitles || [])];
+    const seeds = lib.filter(t => kind === 'tv' ? t.type === 'series' : t.type !== 'series')
+        .map(t => t.id).filter(id => id?.startsWith('tt'));
+    if (!seeds.length) return [];
+    const seedSet = new Set(seeds);
+    const lists = await Promise.all([...new Set(seeds)].slice(0, 8).map(async imdb => {
+        const f = await j(`https://api.themoviedb.org/3/find/${imdb}?api_key=${TMDB}&external_source=imdb_id`);
+        const id = f?.[kind === 'tv' ? 'tv_results' : 'movie_results']?.[0]?.id;
+        if (!id) return [];
+        const d = await j(`https://api.themoviedb.org/3/${kind}/${id}/recommendations?api_key=${TMDB}`);
+        return d?.results || [];
+    }));
+    const votes = {}; const best = {};
+    for (const lst of lists) { const once = new Set();
+        for (const o of lst) { if (o.id && !once.has(o.id)) { once.add(o.id); votes[o.id] = (votes[o.id] || 0) + 1; best[o.id] = best[o.id] || o; } } }
+    return Object.values(best)
+        .sort((a, b) => (votes[b.id] - votes[a.id]) || (b.popularity - a.popularity))
+        .slice(0, 40)
+        .map(r => ({ tmdb: r.id, type: kind === 'tv' ? 'series' : 'movie', name: r.title || r.name, poster: IMG(r.poster_path) }));
 }
 async function home() {
     document.querySelector('#view-home .rows').innerHTML = '';
@@ -103,10 +157,12 @@ async function home() {
         return best;
     };
     addRow('Continue Watching', (st.continue || []).map(t => ({ ...t })), pctOf);
-    addRow('Trending Movies', await tmdbRow('movie', 'trending/movie/week'));
-    addRow('Trending Series', await tmdbRow('tv', 'trending/tv/week'));
-    addRow('Top Rated Movies', await tmdbRow('movie', 'movie/top_rated'));
-    addRow('Top Rated Series', await tmdbRow('tv', 'tv/top_rated'));
+    forYouRow('movie').then(x => addRow('For You — Movies', x));
+    forYouRow('tv').then(x => addRow('For You — Series', x));
+    // the profile's shelf line-up SYNCS from the account (same picks as the Firestick)
+    const enabled = (st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES;
+    for (const r of CK_CAT.SHELF_CATALOG.filter(x => enabled.includes(x.label)))
+        rowItems(r).then(items => addRow(r.label, items));
 }
 
 // ---------- search ----------
@@ -275,14 +331,34 @@ $('signout').onclick = () => { localStorage.removeItem('ck'); location.reload();
 })();
 
 
-// ---------- discover ----------
+// ---------- discover (Type / Category / Genre — same controls as the TV app) ----------
+let dType = 'movie', dCat = 'Popular', dGenre = 'All';
 async function discover() {
     const h = $('discover-rows'); h.innerHTML = '';
-    addRow('New in Theaters', await tmdbRow('movie', 'movie/now_playing'), null, h);
-    addRow('Popular Movies', await tmdbRow('movie', 'movie/popular'), null, h);
-    addRow('Popular Series', await tmdbRow('tv', 'tv/popular'), null, h);
-    addRow('Certified Fresh', await tmdbRow('movie', 'discover/movie?vote_average.gte=7.4&vote_count.gte=300&sort_by=popularity.desc'), null, h);
-    addRow('Anime', await tmdbRow('tv', 'discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc'), null, h);
+    const bar = document.createElement('div'); bar.className = 'season-tabs';
+    const mk = (label, on, fn) => { const b = document.createElement('button');
+        b.className = 'ghost small' + (on ? ' on' : ''); b.textContent = label; b.onclick = fn; return b; };
+    bar.append(mk('Movies', dType === 'movie', () => { dType = 'movie'; discover(); }),
+               mk('Series', dType === 'series', () => { dType = 'series'; discover(); }));
+    const sp = document.createElement('span'); sp.style.width = '1rem'; bar.appendChild(sp);
+    for (const c of CK_CAT.DISCOVER_CATS) bar.appendChild(mk(c.label, dCat === c.label, () => { dCat = c.label; discover(); }));
+    h.appendChild(bar);
+    const gbar = document.createElement('div'); gbar.className = 'season-tabs';
+    for (const g of CK_CAT.GENRES) gbar.appendChild(mk(g, dGenre === g, () => { dGenre = g; discover(); }));
+    h.appendChild(gbar);
+    const cat = CK_CAT.DISCOVER_CATS.find(c => c.label === dCat)[dType];
+    let items;
+    if (dGenre !== 'All') {
+        const ids = dType === 'series' ? CK_CAT.TMDB_TV_GENRE_IDS : CK_CAT.TMDB_GENRE_IDS;
+        const gid = ids[dGenre];
+        items = gid ? await tmdbRow(dType === 'series' ? 'tv' : 'movie',
+            `discover/${dType === 'series' ? 'tv' : 'movie'}?sort_by=popularity.desc&vote_count.gte=40&with_genres=${gid}`, 6)
+            : await cineRow(dType, 'top', dGenre, 3);
+    } else if (cat.tmdb) items = await tmdbRow(dType === 'series' ? 'tv' : 'movie', cat.tmdb, 6);
+    else items = await cineRow(dType, cat.cine, null, 3);
+    // grid rows of 15 like the TV app's Discover
+    for (let i = 0; i < items.length; i += 15)
+        addRow(i === 0 ? `${dCat}${dGenre !== 'All' ? ' · ' + dGenre : ''}` : '', items.slice(i, i + 15), null, h);
 }
 
 // ---------- library ----------
