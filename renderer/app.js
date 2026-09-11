@@ -328,7 +328,35 @@ $('signout').onclick = () => { localStorage.removeItem('ck'); location.reload();
     const saved = JSON.parse(localStorage.getItem('ck') || 'null');
     if (saved?.token) { S.email = saved.email; S.token = saved.token; await bootstrap(); }
     else show('auth');
+    checkUpdate();
 })();
+
+// ---------- self-update pill (same yellow-button flow as the TV player app) ----------
+// Polls couchking.app/desktop/version.json on open; a newer version shows a pill that
+// opens the right installer (.exe / .dmg) in the browser — run it and you're updated.
+async function checkUpdate() {
+    try {
+        const cur = await ck.version();
+        const r = await j(`${SERVICE}/desktop/version.json`);
+        if (!r?.version) return;
+        const cmp = (a, b) => {
+            const A = String(a).split('.').map(Number), B = String(b).split('.').map(Number);
+            for (let i = 0; i < 3; i++) if ((A[i] || 0) !== (B[i] || 0)) return (A[i] || 0) - (B[i] || 0);
+            return 0;
+        };
+        if (cmp(r.version, cur) <= 0) return;
+        const url = ck.platform === 'darwin' ? r.mac : r.win;
+        if (!url) return;
+        const b = document.createElement('button');
+        b.id = 'update-pill';
+        b.textContent = `⬇ Update v${r.version}`;
+        b.style.cssText = 'position:fixed;top:14px;right:16px;z-index:999;background:#f5c518;color:#1a1400;' +
+            'border:none;border-radius:999px;padding:.45rem 1rem;font-weight:700;cursor:pointer;' +
+            'box-shadow:0 2px 12px rgba(245,197,24,.4)';
+        b.onclick = () => { ck.openExternal(url); b.textContent = '⬇ Downloading — run the installer'; };
+        document.body.appendChild(b);
+    } catch {}
+}
 
 
 // ---------- discover (Type / Category / Genre — same controls as the TV app) ----------

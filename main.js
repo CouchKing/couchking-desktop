@@ -4,7 +4,7 @@
 // PLAYBACK = mpv (bundled per-OS under mpv/, falls back to system mpv): plays every
 // MKV/H.264/HEVC/DDP file exactly like the TV app's Media3+ffmpeg stack — no browser
 // codec roulette. mpv is controlled over its JSON IPC socket for progress beacons.
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -43,6 +43,12 @@ ipcMain.handle('http', async (_e, { url, method = 'GET', body = null, timeoutMs 
 });
 
 ipcMain.handle('service', () => SERVICE);
+ipcMain.handle('version', () => app.getVersion());
+// update pill: the renderer hands us the installer URL from /desktop/version.json —
+// download goes through the system browser (no in-app downloader to babysit)
+ipcMain.handle('openExternal', (_e, url) => {
+    if (/^https:\/\//.test(String(url))) shell.openExternal(String(url));
+});
 
 // ---- mpv playback ----
 let mpvProc = null, mpvSock = null, mpvIpcPath = null;
