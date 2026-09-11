@@ -55,11 +55,14 @@ let mpvProc = null, mpvSock = null, mpvIpcPath = null;
 let lastPos = 0, lastDur = 0, onExitBeacon = null;
 
 function mpvBinary() {
-    const plat = process.platform;
-    const bundled = plat === 'win32'
-        ? path.join(__dirname, 'mpv', 'win', 'mpv.exe')
-        : path.join(__dirname, 'mpv', 'mac', 'mpv');
-    if (fs.existsSync(bundled)) return bundled;
+    // spawn() can't exec out of the asar archive — bundled binaries live in app.asar.unpacked
+    const base = __dirname.replace('app.asar', 'app.asar.unpacked');
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x86_64';
+    const candidates = process.platform === 'win32'
+        ? [path.join(base, 'mpv', 'win', 'mpv.exe')]
+        : [path.join(base, 'mpv', 'mac-' + arch, 'mpv.app', 'Contents', 'MacOS', 'mpv'),
+           path.join(base, 'mpv', 'mac', 'mpv')];
+    for (const c of candidates) if (fs.existsSync(c)) return c;
     return 'mpv';   // dev fallback: system mpv on PATH
 }
 

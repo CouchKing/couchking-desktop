@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CouchKing</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -19,6 +20,10 @@
       <div id="auth-error" class="err"></div>
       <button id="auth-signin" class="primary">Sign in</button>
       <button id="auth-signup" class="ghost">Create account</button>
+      <button id="auth-guest" class="ghost">Continue as guest</button>
+      <p class="auth-terms">By continuing you agree to the
+        <a href="#" data-ext="https://couchking.app/terms">Terms of Service</a> and
+        <a href="#" data-ext="https://couchking.app/privacy">Privacy Policy</a>.</p>
     </div>
   </section>
 
@@ -35,7 +40,10 @@
     </nav>
 
     <div id="content">
-      <section id="view-home" class="page"><main class="rows"></main></section>
+      <section id="view-home" class="page">
+        <div id="hero" class="hidden"></div>
+        <main class="rows"></main>
+      </section>
 
       <section id="view-search" class="page hidden">
         <div class="page-pad">
@@ -44,7 +52,10 @@
         </div>
       </section>
 
-      <section id="view-discover" class="page hidden"><main class="rows" id="discover-rows"></main></section>
+      <section id="view-discover" class="page hidden">
+        <div class="pickers" id="discover-pickers"></div>
+        <main class="rows" id="discover-rows"></main>
+      </section>
 
       <section id="view-library" class="page hidden"><main class="rows" id="library-rows"></main></section>
 
@@ -54,19 +65,21 @@
           <div class="set-card"><b>Account</b><span id="set-email" class="muted"></span></div>
           <div class="set-card"><b>Service</b><span id="set-service" class="muted"></span></div>
           <div id="settings-extra"></div>
-          <div class="set-card"><b>Version</b><span class="muted">CouchKing Desktop 0.4</span></div>
+          <div class="set-card"><b>Version</b><span class="muted" id="set-version">CouchKing</span></div>
+          <div class="set-card"><b>Legal</b><span><a href="#" data-ext="https://couchking.app/terms">Terms</a> · <a href="#" data-ext="https://couchking.app/privacy">Privacy</a></span></div>
           <button id="signout" class="ghost">Sign out</button>
         </div>
       </section>
 
-      <section id="view-detail" class="page hidden">
+      <section id="view-detail" class="page detail-page hidden">
+        <div id="detail-backdrop"></div>
         <button id="back" class="ghost small">‹ Back</button>
         <div id="detail-body"></div>
       </section>
     </div>
   </div>
 
-  <!-- NOW PLAYING banner -->
+  <!-- NOW PLAYING banner (desktop/mpv only) -->
   <div id="playing" class="hidden">
     <span id="playing-title"></span>
     <span id="playing-pos" class="muted"></span>
@@ -74,6 +87,7 @@
   </div>
 
 </div>
+<script src="ck-web.js"></script>
 <script src="catalog.js"></script>
 <script src="app.js"></script>
 </body>

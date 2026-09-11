@@ -8,6 +8,18 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm ci || npm install
+      # Bundle mpv (playback engine) — plain x86_64 build (v3 needs newer CPUs; arm64
+      # Windows runs the x64 exe fine under emulation)
+      - name: Bundle mpv
+        shell: pwsh
+        run: |
+          $rel = Invoke-RestMethod https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest
+          $asset = $rel.assets | Where-Object { $_.name -match '^mpv-x86_64-[0-9].*\.7z$' } | Select-Object -First 1
+          Invoke-WebRequest $asset.browser_download_url -OutFile mpv.7z
+          7z x mpv.7z -ompvtmp | Out-Null
+          New-Item -ItemType Directory -Force mpv/win | Out-Null
+          Copy-Item mpvtmp/mpv.exe mpv/win/mpv.exe
+          Remove-Item -Recurse -Force mpvtmp, mpv.7z
       # ONE installer with x64 + arm64 inside — it auto-installs the right one
       - run: npx electron-builder --win nsis --x64 --arm64 --publish never
       - uses: actions/upload-artifact@v4
@@ -19,7 +31,20 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm ci || npm install
-      # universal = one download runs on Apple Silicon AND Intel Macs
+      # Bundle mpv.app for BOTH arches (the electron app is universal; mpv is per-arch,
+      # main.js picks mpv/mac-<arch>/mpv.app at runtime)
+      - name: Bundle mpv
+        run: |
+          for arch in arm64 x86_64; do
+            url=$(curl -s https://api.github.com/repos/eko5624/mpv-mac/releases/latest \
+              | jq -r ".assets[] | select(.name | startswith(\"mpv-$arch\")) | .browser_download_url")
+            curl -sL "$url" -o mpv-$arch.zip
+            mkdir -p mpv/mac-$arch
+            unzip -q mpv-$arch.zip -d mpvtmp-$arch
+            mv mpvtmp-$arch/mpv/mpv.app mpv/mac-$arch/mpv.app
+            chmod +x mpv/mac-$arch/mpv.app/Contents/MacOS/mpv
+            rm -rf mpvtmp-$arch mpv-$arch.zip
+          done
       - run: npx electron-builder --mac dmg --universal --publish never
       - uses: actions/upload-artifact@v4
         with: { name: CouchKing-macOS, path: dist/*.dmg }
