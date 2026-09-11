@@ -4,8 +4,8 @@
 const TMDB = 'b05e998c589bf1393c1059bd1d4c5895';
 const CINE = 'https://v3-cinemeta.strem.io';
 let SERVICE = 'https://couchking.app';
-let S = { email: '', token: '', user: '', subKey: '', addons: [], state: {}, guest: false };
-const APPVER = () => (ck.platform === 'web' ? 'web' : 'desktop') + '-0.7';
+let S = { email: '', token: '', user: '', useg: '', subKey: '', addons: [], state: {}, guest: false, access: null };
+const APPVER = () => (ck.platform === 'web' ? 'web' : 'desktop') + '-0.9';
 // the app is a NEUTRAL TRACKER SHELL until an account with an assigned service signs in
 // (guests and key-less accounts browse + track + see where-to-watch; no stream buttons)
 const hasService = () => !S.guest && S.addons.length > 0;
@@ -22,6 +22,13 @@ document.addEventListener('click', (e) => {
     if (a) { e.preventDefault(); ck.openExternal(a.dataset.ext); }
 });
 
+function toast(msg) {
+    document.getElementById('toast')?.remove();
+    const t = document.createElement('div'); t.id = 'toast'; t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2200);
+}
+
 // ---------- auth ----------
 async function auth(mode) {
     $('auth-error').textContent = '';
@@ -33,10 +40,8 @@ async function auth(mode) {
     await bootstrap();
 }
 function guest() {
-    S.guest = true; S.email = ''; S.token = ''; S.state = {}; S.addons = []; S.user = 'Guest';
+    S.guest = true; S.email = ''; S.token = ''; S.state = {}; S.addons = []; S.user = 'Guest'; S.useg = '';
     $('prof-name').textContent = 'Guest'; $('prof-avatar').textContent = '👤';
-    $('set-email').textContent = 'Guest — sign out to create an account';
-    $('set-service').textContent = 'None (guest)';
     show('main'); home();
 }
 // guest hits a wall on anything account-backed → friendly sign-in gate
@@ -56,6 +61,7 @@ function gate(msg) {
 async function bootstrap() {
     // assigned addon auto-install (same as the store app) + full account state
     const acc = await j(`${SERVICE}/tvapp/access?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`);
+    S.access = acc && acc.allowed !== undefined ? { expires: acc.expires || '', daysLeft: acc.daysLeft } : null;
     S.state = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`) || {};
     S.addons = S.state.addons || [];
     if (!S.addons.length && acc?.allowed && acc.addon) S.addons = [{ url: acc.addon, name: 'CouchKing' }];
@@ -69,22 +75,24 @@ async function bootstrap() {
     S.pid = profs.find(p => p.id === savedPid)?.id || profs[0]?.id || '';
     const prof = profs.find(p => p.id === S.pid);
     S.user = prof?.name || S.email.split('@')[0];
+    // the SAME identity segment the Android apps send: "Name #<last-4-of-profile-id>" so
+    // two same-named profiles never blend, and web + Firestick share ONE ckpos resume key
+    S.useg = prof ? `${prof.name} #${String(prof.id).slice(-4)}` : S.user;
     $('prof-name').textContent = S.user;
     $('prof-avatar').textContent = prof?.avatar || '👤';
-    $('set-email').textContent = S.email;
-    $('set-service').textContent = S.subKey ? 'Connected (' + S.subKey.slice(0, 8) + '…)' : 'None on this account';
     applyAccountPrefs();
     lastSyncSig = syncSig();
     show('main'); home();
 }
 
 // live sync like the phone/Firestick: re-pull account state every 60s so what you watch
-// on other devices shows up here without a restart. QUIET: only re-render when the data
-// actually changed AND you're parked at the top of Home — never yank the page around.
+// on other devices shows up here without a restart. QUIET: the server re-derives the
+// Continue order on every GET (tvSortContinue), so a full re-render every minute made
+// the page visibly rebuild — now ONLY the hero + Continue row repaint, in place.
 let lastSyncSig = '';
 function syncSig() {
     const p = pstate();
-    return JSON.stringify([p.continue, p.cwlast, p.positions, p.watchlist, p.watchedIds, p.prefs]);
+    return JSON.stringify([p.continue, p.cwlast, p.positions, p.watchlist, p.watchedIds, p.prefs, p.newEpsSeen]);
 }
 setInterval(async () => {
     if (S.guest || !S.token || playing) return;
@@ -94,7 +102,7 @@ setInterval(async () => {
     const sig = syncSig();
     if (sig === lastSyncSig) return;
     lastSyncSig = sig;
-    if (page === 'home' && $('content').scrollTop < 60) home();
+    if (page === 'home') { hero(pstate()); paintContinueRow(); }
 }, 60000);
 
 // rail navigation: pages live side by side, rail icon marks the active one
@@ -102,7 +110,7 @@ let page = 'home';
 function nav(which) {
     page = which;
     document.querySelectorAll('.rail-item.nav').forEach(n => n.classList.toggle('on', n.dataset.nav === which));
-    for (const v of ['home', 'search', 'discover', 'library', 'settings', 'detail'])
+    for (const v of ['home', 'search', 'discover', 'library', 'settings', 'detail', 'person', 'episode'])
         $('view-' + v)?.classList.toggle('hidden', v !== which);
     if (which === 'search') setTimeout(() => $('search').focus(), 50);
     if (which === 'discover' && !$('discover-rows').childElementCount) discover();
@@ -118,8 +126,8 @@ function show(which) {
 // ---------- posters / rows ----------
 const IMG = (p, w = 342) => p ? (p.startsWith('http') ? p : `https://image.tmdb.org/t/p/w${w}${p}`) : '';
 // tile = EXACT Firestick card: white bar on a dark track flush at the poster's bottom
-// (only 2–97%), purple ✓ top-right = My List, yellow eye top-left = watched, single-line
-// centered title below
+// (only 2–97%), purple ✓ top-right = My List, yellow eye top-left = watched, "+N" =
+// new episodes aired since last watched, single-line ELLIPSIZED centered title below
 function posterEl(t, opts = {}) {
     const d = document.createElement('div'); d.className = 'poster';
     const st = pstate();
@@ -129,11 +137,12 @@ function posterEl(t, opts = {}) {
     d.innerHTML = `<div class="pwrap"><img loading="lazy" src="${t.poster || ''}">`
         + (opts.chip ? `<div class="ep-chip">${opts.chip}</div>` : '')
         + (opts.removable ? `<div class="cw-x" title="Remove from Continue Watching">✕</div>` : '')
-        + (inList ? '<div class="badge-list">✓</div>' : '')
+        + (inList && !opts.removable ? '<div class="badge-list">✓</div>' : '')
         + (isDone && !opts.removable ? '<div class="badge-done">👁</div>' : '')
+        + (opts.newEps > 0 ? `<div class="badge-new">+${opts.newEps}</div>` : '')
         + (hasBar ? `<div class="bar"><div style="width:${opts.pct}%"></div></div>` : '')
         + `</div>`
-        + (PREF('titles', true) ? `<div class="pt">${t.name || ''}</div>` : '');
+        + (PREF('titles', true) ? `<div class="pt" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || ''}</div>` : '');
     d.onclick = (e) => { if (!e.target.classList.contains('cw-x')) detail(t); };
     if (opts.removable) d.querySelector('.cw-x').onclick = () => removeContinue(t, d);
     return d;
@@ -149,6 +158,7 @@ function removeContinue(t, el) {
         st.removedTs = stamp(st.removedTs, 'pos:' + k); delete pos[k];
     }
     el.remove(); pushAccount();
+    j(`${SERVICE}/player/clear`, { method: 'POST', body: { k: S.subKey, u: S.useg, i: t.id } });
 }
 function addRow(label, items, opts, holder) {
     if (!items?.length) return;
@@ -158,7 +168,7 @@ function addRow(label, items, opts, holder) {
     for (const t of items) s.appendChild(posterEl(t, typeof opts === 'function' ? opts(t) : (opts || {})));
     rows.appendChild(s);
 }
-async function tmdbRow(kind, path, pages = 3) {
+async function tmdbRow(kind, path, pages = 3, cap = 0) {
     const reqs = [];
     for (let p = 1; p <= pages; p++)
         reqs.push(j(`https://api.themoviedb.org/3/${path}${path.includes('?') ? '&' : '?'}api_key=${TMDB}&page=${p}`));
@@ -167,9 +177,10 @@ async function tmdbRow(kind, path, pages = 3) {
         for (const r of (d?.results || [])) {
             if (seen.has(r.id)) continue; seen.add(r.id);
             out.push({ tmdb: r.id, type: kind === 'tv' ? 'series' : 'movie', name: r.title || r.name,
-                       poster: IMG(r.poster_path), backdrop: IMG(r.backdrop_path, 1280) });
+                       poster: IMG(r.poster_path), backdrop: IMG(r.backdrop_path, 1280),
+                       genres: r.genre_ids || [] });
         }
-    return out.slice(0, 60);
+    return out.slice(0, cap || (pages > 3 ? 400 : 60));
 }
 async function cineRow(type, id, genre, pages = 1) {
     const reqs = [];
@@ -183,7 +194,7 @@ async function cineRow(type, id, genre, pages = 1) {
             if (seen.has(m.id)) continue; seen.add(m.id);
             out.push({ id: m.id, type, name: m.name, poster: m.poster });
         }
-    return out.slice(0, 60);
+    return out.slice(0, pages > 2 ? 400 : 60);
 }
 async function idsRow(type, ids) {
     const metas = await Promise.all(ids.map(id =>
@@ -193,9 +204,31 @@ async function idsRow(type, ids) {
     return out;
 }
 async function rowItems(r) {
-    if (r.ids) return idsRow(r.type, r.ids);
-    if (r.tmdb) return tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb);
-    return cineRow(r.type, r.cine, r.genre, 2);
+    if (r.ids) return idsRow(r.type, r.ids);   // curated watch orders: EXACT order, never shuffled
+    if (r.tmdb) return profileMix(await tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb));
+    return profileMix(await cineRow(r.type, r.cine, r.genre, 2));
+}
+// deterministic per-profile per-day shuffle — stable all day, fresh mix tomorrow,
+// different per profile (same seed rule as the TV app's profileMix)
+function profileMix(items) {
+    if (!items || items.length < 4) return items || [];
+    const pid = S.pid || 'guest';
+    let h = 0;
+    for (let i = 0; i < pid.length; i++) h = (Math.imul(31, h) + pid.charCodeAt(i)) | 0;
+    const day = Math.floor(Date.now() / 86400000);
+    let seed = (Math.imul(h, 1000003) ^ day) >>> 0;
+    const rnd = () => {   // mulberry32
+        seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const a = [...items];
+    for (let i = a.length - 1; i > 0; i--) {
+        const k = Math.floor(rnd() * (i + 1));
+        [a[i], a[k]] = [a[k], a[i]];
+    }
+    return a;
 }
 // For You — SAME consensus ranking as the TV app (votes across your watched/library seeds)
 async function forYouRow(kind) {
@@ -220,6 +253,51 @@ async function forYouRow(kind) {
         .map(r => ({ tmdb: r.id, type: kind === 'tv' ? 'series' : 'movie', name: r.title || r.name, poster: IMG(r.poster_path) }));
 }
 
+// ---------- new-episode badges (synced through newEpsSeen, key = season*10000+episode) ----------
+const newEpCache = {};
+async function newEpisodeCount(titleId) {
+    if (titleId in newEpCache) return newEpCache[titleId];
+    const st = pstate();
+    const meta = (await j(`${CINE}/meta/series/${titleId}.json`))?.meta;
+    const eps = (meta?.videos || []).filter(v => v.season > 0)
+        .sort((a, b) => a.season - b.season || a.episode - b.episode);
+    if (!eps.length) return (newEpCache[titleId] = 0);
+    const aired = (e) => !e.released || new Date(e.released) <= new Date();
+    const key = (e) => e.season * 10000 + e.episode;
+    const latestAiredKey = Math.max(0, ...eps.filter(aired).map(key));
+    // opening the show dismissed the badge (on ANY device — merged by max) until
+    // something genuinely newer airs
+    if (latestAiredKey > 0 && ((st.newEpsSeen || {})[titleId] || 0) >= latestAiredKey)
+        return (newEpCache[titleId] = 0);
+    const pos = st.positions || {};
+    const watchedIds = new Set(st.watchedIds || []);
+    const watched = eps.filter(e => {
+        const k = `${titleId}:${e.season}:${e.episode}`;
+        return watchedIds.has(k) || (parseInt(String(pos[k] || '').split('|')[0]) || 0) > 60000;
+    });
+    if (!watched.length) return (newEpCache[titleId] = 0);
+    const last = watched[watched.length - 1];
+    // deep back-catalog binges: "+9" means nothing when nothing new actually aired
+    const maxSeason = Math.max(0, ...eps.filter(aired).map(e => e.season));
+    if (last.season < maxSeason - 1) return (newEpCache[titleId] = 0);
+    const n = Math.min(9, eps.filter(e => aired(e) && key(e) > key(last)).length);
+    return (newEpCache[titleId] = n);
+}
+// opening a show's page clears its badge — record the latest aired key as seen (merged
+// by MAX across devices, exactly like the Firestick)
+function dismissNewEpsBadge(titleId, meta) {
+    if (S.guest || meta?.type !== 'series') return;
+    const eps = (meta.videos || []).filter(v => v.season > 0 && (!v.released || new Date(v.released) <= new Date()));
+    if (!eps.length) return;
+    const key = Math.max(...eps.map(e => e.season * 10000 + e.episode));
+    const st = pstate();
+    if (key > ((st.newEpsSeen || {})[titleId] || 0)) {
+        st.newEpsSeen = { ...(st.newEpsSeen || {}), [titleId]: key };
+        newEpCache[titleId] = 0;
+        pushAccount();
+    }
+}
+
 // ---------- home ----------
 // SAME rule as the Firestick's cwProgress: the bar shows ONLY the episode you're on
 // (cwlast) — never the max across the whole show (a finished S1E1 made a 2-min-into-S2E4
@@ -236,20 +314,24 @@ function cwChip(st, t) {
     const [, s, e] = last.split(':');
     return s && e ? `S${s} · E${e}` : '';
 }
+let lastHeroKey = '';
 async function hero(st) {
-    const h = $('hero'); h.classList.add('hidden'); h.innerHTML = '';
+    const h = $('hero');
     let t = (st.continue || [])[0];
     let sub = '', bg = '';
+    if (t) sub = t.type === 'series' && cwChip(st, t) ? `Continue watching · ${cwChip(st, t)}` : 'Continue watching';
+    const heroKey = t ? t.id + '|' + sub : 'trend';
+    if (heroKey === lastHeroKey && h.childElementCount) return;   // quiet sync: no repaint when nothing changed
     if (t) {
         const meta = (await j(`${CINE}/meta/${t.type}/${t.id}.json`))?.meta;
         bg = meta?.background || '';
-        sub = t.type === 'series' && cwChip(st, t) ? `Continue watching · ${cwChip(st, t)}` : 'Continue watching';
     } else {
         const tr = await tmdbRow('tv', 'trending/tv/week', 1);
         t = tr[0]; bg = t?.backdrop || ''; sub = 'Trending this week';
         if (t) { const f = await j(`https://api.themoviedb.org/3/tv/${t.tmdb}/external_ids?api_key=${TMDB}`); if (f?.imdb_id) t.id = f.imdb_id; }
     }
-    if (!t || !bg) return;
+    if (!t || !bg) { h.classList.add('hidden'); return; }
+    lastHeroKey = heroKey;
     // no service on the account → tracker shell: More info only, no play button
     h.innerHTML = `<div class="hero-bg" style="background-image:url('${bg}')"></div><div class="hero-fade"></div>
         <div class="hero-body"><h2>${t.name || ''}</h2><div class="hero-sub">${sub}</div>
@@ -262,20 +344,85 @@ async function hero(st) {
     h.onclick = () => detail(t);
     if (hasService()) btns[0].onclick = async (e) => {
         e.stopPropagation();
-        const last = (pstate().cwlast || {})[t.id];
-        if (t.type === 'series' && last?.includes(':')) {
-            const [, s, ep] = last.split(':');
-            detail(t).then(() => pickStream(last, `${t.name} S${s}E${ep}`, true));
-        } else detail(t).then(() => t.type === 'movie' && pickStream(t.id, t.name, true));
+        resumeTitle(t);
     };
+}
+// hero Resume / CW: series jumps straight to the current episode's page (auto-plays the
+// top stream), movies play directly — same as the Firestick's resumeFromCw
+async function resumeTitle(t) {
+    const st = pstate();
+    const last = (st.cwlast || {})[t.id];
+    if (t.type === 'series' && last?.includes(':')) {
+        const meta = (await j(`${CINE}/meta/series/${t.id}.json`))?.meta;
+        const [, s, e] = last.split(':');
+        const ep = (meta?.videos || []).find(v => v.season == s && v.episode == e);
+        if (meta && ep) { episodePage({ id: t.id, type: 'series' }, meta, ep, true); return; }
+    }
+    await detail(t);
+    if (t.type !== 'series') pickStream(t.id, t.name, true);
+}
+let cwHolderEl = null;
+function paintContinueRow() {
+    if (!cwHolderEl || !cwHolderEl.isConnected) return;
+    const st = pstate();
+    cwHolderEl.innerHTML = '';
+    const cont = st.continue || [];
+    if (!cont.length || !hasService()) return;
+    addRow('Continue Watching', cont.map(t => ({ ...t })),
+        (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest, newEps: newEpCache[t.id] || 0 }),
+        cwHolderEl);
+    // "+N new episodes" pass — fills badges in place once the counts land
+    (async () => {
+        let any = false;
+        for (const t of cont.filter(x => x.type === 'series'))
+            if (await newEpisodeCount(t.id) > 0) any = true;
+        if (any && cwHolderEl.isConnected) {
+            cwHolderEl.innerHTML = '';
+            addRow('Continue Watching', cont.map(t => ({ ...t })),
+                (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest, newEps: newEpCache[t.id] || 0 }),
+                cwHolderEl);
+        }
+    })();
+}
+// Netflix's Top 10 shelf — giant ghost rank numeral tucked behind each poster, same
+// trending/day movie+show interleave as the TV app, never profile-shuffled
+async function top10Row(holder) {
+    const [mv, tv] = await Promise.all([
+        tmdbRow('movie', 'trending/movie/day', 1),
+        tmdbRow('tv', 'trending/tv/day', 1),
+    ]);
+    const mix = [];
+    for (let i = 0; i < Math.max(mv.length, tv.length); i++) {
+        if (mv[i]) mix.push(mv[i]);
+        if (tv[i]) mix.push(tv[i]);
+    }
+    const ten = mix.slice(0, 10);
+    if (!ten.length || !holder.isConnected) return;
+    holder.innerHTML = '';
+    const l = document.createElement('div'); l.className = 'row-label'; l.textContent = 'Top 10 Today';
+    holder.appendChild(l);
+    const strip = document.createElement('div'); strip.className = 'strip top10';
+    ten.forEach((t, i) => {
+        const cell = document.createElement('div'); cell.className = 'top10-cell' + (i === 9 ? ' wide' : '');
+        const num = document.createElement('div'); num.className = 'top10-num'; num.textContent = i + 1;
+        cell.appendChild(num);
+        cell.appendChild(posterEl(t));
+        strip.appendChild(cell);
+    });
+    holder.appendChild(strip);
 }
 async function home() {
     const rows = document.querySelector('#view-home .rows');
     rows.innerHTML = '';
+    lastHeroKey = '';
     const st = pstate();
     hero(st);
-    addRow('Continue Watching', (st.continue || []).map(t => ({ ...t })),
-        (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest }));
+    // Continue Watching lives in a STABLE holder so the 60s sync can repaint just it
+    cwHolderEl = document.createElement('div'); rows.appendChild(cwHolderEl);
+    paintContinueRow();
+    // Top 10 rides right under Continue Watching (leads the page when there's no CW)
+    const top10Holder = document.createElement('div'); rows.appendChild(top10Holder);
+    top10Row(top10Holder);
     // rows land IN CATALOG ORDER via pre-placed slots (async fills used to append in
     // completion order — the board shuffled on every load and looked nothing like the TV)
     const slot = () => { const s = document.createElement('div'); rows.appendChild(s); return s; };
@@ -296,7 +443,7 @@ async function home() {
     }
 }
 
-// ---------- search ----------
+// ---------- search (movies + shows + PEOPLE, like the apps) ----------
 let searchT = null;
 $('search').addEventListener('input', () => {
     clearTimeout(searchT);
@@ -304,16 +451,67 @@ $('search').addEventListener('input', () => {
         const q = $('search').value.trim();
         const holder = $('search-rows');
         holder.innerHTML = '';
-        if (!q) return;
-        const [m, s] = await Promise.all([
+        if (q.length < 2) return;
+        const [m, s, people] = await Promise.all([
             j(`${CINE}/catalog/movie/top/search=${encodeURIComponent(q)}.json`),
-            j(`${CINE}/catalog/series/top/search=${encodeURIComponent(q)}.json`)
+            j(`${CINE}/catalog/series/top/search=${encodeURIComponent(q)}.json`),
+            searchPeople(q),
         ]);
+        if ($('search').value.trim() !== q) return;
         const map = (d, ty) => (d?.metas || []).slice(0, 25).map(x => ({ id: x.id, type: ty, name: x.name, poster: x.poster }));
+        if (people.length) {
+            const l = document.createElement('div'); l.className = 'row-label'; l.textContent = 'People';
+            holder.appendChild(l);
+            const strip = document.createElement('div'); strip.className = 'strip';
+            for (const p of people) strip.appendChild(personCard(p));
+            holder.appendChild(strip);
+        }
+        addRow('Shows', map(s, 'series'), null, holder);
         addRow('Movies', map(m, 'movie'), null, holder);
-        addRow('Series', map(s, 'series'), null, holder);
+        if (!holder.childElementCount) holder.innerHTML = `<p class="muted" style="padding-top:1rem">No results for “${q}”</p>`;
     }, 400);
 });
+// face + name matches for a typed query — real people search, not just text chips
+async function searchPeople(q) {
+    const d = await j(`https://api.themoviedb.org/3/search/person?api_key=${TMDB}&query=${encodeURIComponent(q)}`);
+    const seen = new Set();
+    return (d?.results || [])
+        .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+        .filter(p => p.name && !seen.has(p.name) && seen.add(p.name))
+        .slice(0, 8)
+        .map(p => ({ id: p.id, name: p.name,
+            photo: p.profile_path ? `https://image.tmdb.org/t/p/w185${p.profile_path}` : '',
+            role: p.known_for_department === 'Directing' ? 'Director' : 'Actor' }));
+}
+function personCard(p) {
+    const d = document.createElement('div'); d.className = 'person-card';
+    d.innerHTML = `<div class="person-photo">${p.photo ? `<img src="${p.photo}">` : '👤'}</div>
+        <div class="pt">${p.name}</div><div class="person-role">${p.role}</div>`;
+    d.onclick = () => personPage(p);
+    return d;
+}
+// Stremio-style person page: who they are + what they've been in (acting or directing)
+async function personPage(p) {
+    nav('person');
+    const body = $('person-body');
+    body.innerHTML = `<button class="ghost small" id="person-back">‹ Back</button>
+        <div class="person-head">${p.photo ? `<img src="${p.photo}">` : ''}<div><h2>${p.name}</h2><div class="muted">${p.role}</div></div></div>
+        <div id="person-rows"><p class="muted">Loading…</p></div>`;
+    $('person-back').onclick = () => nav('search');
+    const c = await j(`https://api.themoviedb.org/3/person/${p.id}/combined_credits?api_key=${TMDB}`);
+    const credits = [...(c?.cast || []), ...((c?.crew || []).filter(x => x.job === 'Director'))];
+    const seen = new Set();
+    const uniq = credits.filter(x => {
+        const k = x.media_type + x.id;
+        return x.poster_path && !seen.has(k) && seen.add(k);
+    }).sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+    const mk = (x) => ({ tmdb: x.id, type: x.media_type === 'tv' ? 'series' : 'movie',
+        name: x.title || x.name, poster: IMG(x.poster_path) });
+    const rows = $('person-rows'); rows.innerHTML = '';
+    addRow('Shows', uniq.filter(x => x.media_type === 'tv').slice(0, 14).map(mk), null, rows);
+    addRow('Movies', uniq.filter(x => x.media_type === 'movie').slice(0, 14).map(mk), null, rows);
+    if (!rows.childElementCount) rows.innerHTML = '<p class="muted">Nothing found.</p>';
+}
 
 // ---------- detail ----------
 async function resolveImdb(t) {
@@ -327,7 +525,8 @@ async function detail(t) {
     if (!imdb) return;
     const meta = (await j(`${CINE}/meta/${t.type}/${imdb}.json`))?.meta;
     if (!meta) return;
-    cur = { imdb, type: t.type, meta };
+    cur = { imdb, type: t.type, meta, t: { ...t, id: imdb } };
+    dismissNewEpsBadge(imdb, meta);   // opening the show clears its "+N" badge everywhere
     nav('detail');
     $('detail-backdrop').style.backgroundImage = meta.background ? `url('${meta.background}')` : '';
     const st = pstate();
@@ -410,7 +609,9 @@ function seasons(meta) {
                 <div class="et"><b>${e.episode}. ${e.name || ''}</b><span>${(e.released || '').slice(0, 10)}${aired ? '' : ' · not aired'}</span>
                 ${e.overview && !(doBlur && !seen) ? `<div class="ep-desc">${e.overview}</div>` : ''}</div>
                 <button class="ep-eye" title="${seen ? 'Watched — click to unmark' : 'Mark episode watched'}">${seen ? '✓' : '👁'}</button>`;
-            el.onclick = () => aired && hasService() && pickStream(key, `${meta.name} S${e.season}E${e.episode}`);
+            // Stremio-style: the episode click opens its own PAGE (facts + streams filling
+            // in) — never a toast-and-wait, never streams dumped at the page bottom
+            el.onclick = () => aired && episodePage(cur.t, meta, e);
             el.querySelector('.ep-eye').onclick = (ev) => {
                 ev.stopPropagation();
                 if (S.guest) return gate('Track watched episodes with a free account.');
@@ -436,6 +637,81 @@ function toggleEpWatched(key) {
     pushAccount();
 }
 
+// ---------- episode page (Stremio-style, mirrors the TV app's showEpisodeDetail) ----------
+let epPollToken = 0;
+async function episodePage(t, meta, ep, autoplay = false) {
+    cur = { imdb: meta.id, type: 'series', meta, t: { ...t, id: meta.id } };
+    const sid = `${meta.id}:${ep.season}:${ep.episode}`;
+    const label = `${meta.name} S${ep.season}E${ep.episode}`;
+    nav('episode');
+    $('episode-backdrop').style.backgroundImage =
+        (meta.background || ep.thumbnail || meta.poster) ? `url('${meta.background || ep.thumbnail || meta.poster}')` : '';
+    $('ep-back').onclick = () => detail(cur.t);
+    const body = $('episode-body');
+    const st = pstate();
+    const [p, d] = String((st.positions || {})[sid] || '').split('|').map(Number);
+    const resumePct = p > 60000 && d > 0 ? Math.round(100 * p / d) : 0;
+    // logo (or name) big, then "year · SxxEyy · air date · name", resume %, description,
+    // Mark watched, then the streams strip filling in
+    body.innerHTML = `
+        ${meta.logo ? `<img class="ep-logo" src="${meta.logo}">` : `<h2>${meta.name}</h2>`}
+        <div class="ep-facts">${[meta.year, `S${String(ep.season).padStart(2, '0')}E${String(ep.episode).padStart(2, '0')}`,
+            (ep.released || '').slice(0, 10), ep.name].filter(Boolean).join('  ·  ')}</div>
+        ${resumePct > 0 ? `<div class="ep-resume">Resume from ${resumePct}%</div>` : ''}
+        ${ep.overview || ep.description ? `<div class="d-desc" style="margin:.5rem 0">${ep.overview || ep.description || ''}</div>` : ''}
+        <button class="ghost small" id="ep-watched"></button>
+        <div class="row-label">Streams</div>
+        <div class="muted" id="ep-note">Finding streams…</div>
+        <div id="ep-streams" class="streams"></div>`;
+    const paintWt = () => {
+        $('ep-watched').textContent = (pstate().watchedIds || []).includes(sid) ? '✓ Watched' : 'Mark watched';
+    };
+    $('ep-watched').onclick = () => { if (S.guest) return gate('Track watched episodes with a free account.'); toggleEpWatched(sid); paintWt(); };
+    paintWt();
+    if (!hasService()) { $('ep-note').textContent = 'Streams need a connected account.'; return; }
+    // a just-aired episode is usually still CACHING — poll every 15s (up to ~3 min) and
+    // fill streams in the moment the download lands (same rule as the Firestick)
+    const token = ++epPollToken;
+    const base = S.addons[0].url.replace(/\/$/, '');
+    let streams = [], tries = 0;
+    const fetchStreams = async () =>
+        (await j(`${base}/stream/series/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 }))?.streams || [];
+    streams = await fetchStreams();
+    const aired = !ep.released || new Date(ep.released) <= new Date();
+    while (!streams.length && aired && tries < 12 && token === epPollToken && page === 'episode') {
+        $('ep-note').textContent = 'Getting this episode ready — it’ll appear here in a minute or two…';
+        await new Promise(r => setTimeout(r, 15000));
+        if (token !== epPollToken || page !== 'episode') return;
+        streams = await fetchStreams();
+        tries++;
+    }
+    if (token !== epPollToken) return;
+    if (!streams.length) {
+        $('ep-note').textContent = !aired ? 'This episode hasn’t aired yet.' : 'Still getting this ready — check back in a minute.';
+        return;
+    }
+    $('ep-note').classList.add('hidden');
+    const holder = $('ep-streams');
+    holder.innerHTML = '';
+    for (const s of streams) {
+        const el = document.createElement('div'); el.className = 'stream';
+        el.innerHTML = `<b>${(s.name || '').replace(/\n/g, ' ')}</b>${(s.description || s.title || '').split('\n')[0]}`;
+        el.onclick = () => playEpisodeStream(s, meta, ep, sid, label);
+        holder.appendChild(el);
+    }
+    if (autoplay && streams[0]) playEpisodeStream(streams[0], meta, ep, sid, label);
+}
+function playEpisodeStream(s, meta, ep, sid, label) {
+    // Continue Watching means you PLAYED it — not that you looked at the page
+    if (!S.guest) {
+        pushContinueLocal({ id: meta.id, type: 'series', name: meta.name, poster: meta.poster || '' });
+        const st = pstate();
+        st.cwlast = { ...(st.cwlast || {}), [meta.id]: sid };
+        pushAccount();
+    }
+    play(s.url, label, sid);
+}
+
 // ---------- streams + play ----------
 async function pickStream(sid, label, autoFirst = false) {
     if (!hasService()) return;   // tracker shell: no stream fetches without a service
@@ -446,29 +722,52 @@ async function pickStream(sid, label, autoFirst = false) {
     const d = await j(`${base}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
     const streams = d?.streams || [];
     if (!streams.length) { holder.innerHTML = '<div class="muted">Getting this ready — try again in a minute.</div>'; return; }
-    if (autoFirst && streams[0]) { play(streams[0].url, label, sid); return; }
+    const start = (st) => {
+        if (!S.guest && cur?.meta) {
+            pushContinueLocal({ id: sid.split(':')[0], type, name: cur.meta.name, poster: cur.meta.poster || '' });
+            pushAccount();
+        }
+        play(st.url, label, sid);
+    };
+    if (autoFirst && streams[0]) { start(streams[0]); return; }
     holder.innerHTML = '<div class="row-label">Streams</div>';
     for (const st of streams) {
         const el = document.createElement('div'); el.className = 'stream';
         el.innerHTML = `<b>${(st.name || '').replace(/\n/g, ' ')}</b>${(st.description || st.title || '').split('\n')[0]}`;
-        el.onclick = () => play(st.url, label, sid);
+        el.onclick = () => start(st);
         holder.appendChild(el);
     }
-    holder.scrollIntoView({ behavior: 'smooth' });
+}
+
+function nextEpisodeOf(sid) {
+    if (!cur?.meta?.videos || !sid.includes(':')) return null;
+    const [, s, e] = sid.split(':');
+    const eps = cur.meta.videos.filter(v => v.season > 0).sort((a, b) => a.season - b.season || a.episode - b.episode);
+    const i = eps.findIndex(x => x.season == s && x.episode == e);
+    if (i < 0) return null;
+    return eps.slice(i + 1).find(x => !x.released || new Date(x.released) <= new Date()) || null;
 }
 
 let playing = null;
 async function play(url, label, sid) {
     const imdb = sid.split(':')[0];
     const [, s, e] = sid.split(':');
-    // cross-device resume: whichever device is further in wins (same as the TV app)
-    let startSec = 0;
+    // cross-device resume + learned intro window + learned credits point, one call
+    let startSec = 0, introFromMs = -1, introToMs = -1, creditsMs = 0;
     try {
-        const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.user)}&i=${imdb}&s=${s || ''}&e=${e || ''}`);
-        if (r && String(r.s || '') === String(s || '') && String(r.e || '') === String(e || '') && r.pos > 60000 && r.pct < 92)
-            startSec = Math.floor(r.pos / 1000);
+        const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`);
+        if (r) {
+            if (String(r.s || '') === String(s || '') && String(r.e || '') === String(e || '') && r.pos > 60000 && r.pct < 92)
+                startSec = Math.floor(r.pos / 1000);
+            if (r.introFrom != null && r.introTo > r.introFrom) { introFromMs = r.introFrom; introToMs = r.introTo; }
+            if (r.credits > 0) creditsMs = r.credits;
+        }
     } catch {}
-    playing = { sid, imdb, s, e, label, pos: 0, dur: 0 };
+    // whichever device is further in wins — but a local synced position can be fresher
+    const [lp, ld] = String((pstate().positions || {})[sid] || '').split('|').map(Number);
+    if (lp > 60000 && ld > 0 && lp / ld < 0.92 && lp / 1000 > startSec) startSec = Math.floor(lp / 1000);
+    const next = nextEpisodeOf(sid);
+    playing = { sid, imdb, s, e, label, pos: 0, dur: 0, startMs: startSec * 1000, credits: creditsMs, next };
     if (ck.platform !== 'web') {
         $('playing-title').textContent = label;
         $('playing').classList.remove('hidden');
@@ -476,38 +775,77 @@ async function play(url, label, sid) {
     await ck.play({ url, title: label, startSec, sid,
         subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), audioLang: PREF('audlang', 'en'),
         subBg: PREF('subbg', false), subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0),
-        seekStep: PREF('seek', 10) });
+        seekStep: PREF('seek', 10),
+        introFromMs, introToMs, creditsMs,
+        hasNext: !!(next && hasService()), autonext: PREF('autonext', true),
+        nextLabel: next ? `${cur?.meta?.name || ''} S${next.season}E${next.episode}${next.name ? ' — ' + next.name : ''}` : '' });
 }
 ck.onMpvPos(({ pos, dur }) => {
     if (!playing) return;
     playing.pos = pos; playing.dur = dur;
     if (dur > 0) $('playing-pos').textContent = `${fmt(pos)} / ${fmt(dur)}`;
 });
-ck.onMpvExit(async ({ pos, dur }) => {
+// position where the episode is "basically over" (credits rolling) — same rule as the
+// TV player: credits lead (subs-last-cue → learned clicks → 90s), FLOORED at 80%
+function finishPointSec(durSec, creditsMs, lastCueSec) {
+    const subsLead = lastCueSec > 0 ? durSec - lastCueSec - 2 : -1;
+    const lead = (subsLead >= 15 && subsLead <= 300) ? subsLead
+        : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 90);
+    return Math.max(durSec - lead, durSec * 0.8);
+}
+ck.onMpvExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     $('playing').classList.add('hidden');
     const p = playing; playing = null;
-    if (!p || !dur || pos < 5) return;
-    // one beacon per sit-down — powers For You + cross-device resume (same as TV app)
+    if (!p || !dur || pos < 5) { if (p && next) advanceNext(p); return; }
+    const posMs = Math.floor(pos * 1000), durMs = Math.floor(dur * 1000);
+    // one beacon per sit-down — powers For You + cross-device resume (same as TV app);
+    // a human's next-click near the end also teaches the server where credits start
     await j(`${SERVICE}/player/progress`, { method: 'POST', body: {
-        k: S.subKey, u: S.user, i: p.imdb, s: p.s || '', e: p.e || '',
-        pos: Math.floor(pos * 1000), dur: Math.floor(dur * 1000) } });
-    // finished an episode → mark it watched (checkmark + blur-clear sync to every device)
-    if (p.s && pos / dur >= 0.92 && !S.guest) {
-        const st = pstate(); st.watchedIds = st.watchedIds || [];
-        const key = `${p.imdb}:${p.s}:${p.e}`;
-        if (!st.watchedIds.includes(key)) { st.watchedIds.push(key); pushAccount(); }
+        k: S.subKey, u: S.useg, i: p.imdb, s: p.s || '', e: p.e || '',
+        pos: posMs, dur: durMs,
+        ...(next && credits >= 5000 && credits <= 300000 ? { credits } : {}) } });
+    // the exact same watched rule as the Firestick: only past the finish point (credits
+    // lead, ≥80% floor) AND a real sitting (2+ min or true end) — a bogus near-end
+    // landing + immediate back must NOT count as watched
+    const finish = finishPointSec(dur, p.credits, lastCue);
+    const realSit = posMs - p.startMs >= 120000 || posMs >= durMs - 5000;
+    const watchedNow = pos >= finish && realSit;
+    if (!S.guest) {
+        const st = pstate();
+        // STAMPED position + cwlast into the synced blob — exactly what the Android apps
+        // write, so every device's Continue row and resume % agree with this one
+        st.positions = st.positions || {};
+        st.positions[p.sid] = `${posMs}|${durMs}|${Date.now()}`;
+        if (p.s) st.cwlast = { ...(st.cwlast || {}), [p.imdb]: p.sid };
+        if (watchedNow) {
+            if (p.s) {   // episode → checkmark (blur-clear + eye sync to every device)
+                st.watchedIds = st.watchedIds || [];
+                if (!st.watchedIds.includes(p.sid)) { st.watchedIds.push(p.sid); st.addedTs = stamp(st.addedTs, p.sid); }
+            } else {     // a FINISHED movie leaves Continue Watching (real finish only)
+                st.watchedIds = st.watchedIds || [];
+                if (!st.watchedIds.includes(p.imdb)) { st.watchedIds.push(p.imdb); st.addedTs = stamp(st.addedTs, p.imdb); }
+                st.watchedTitles = [{ id: p.imdb, type: 'movie', name: cur?.meta?.name || p.label, poster: cur?.meta?.poster || '' },
+                    ...(st.watchedTitles || []).filter(x => x.id !== p.imdb)].slice(0, 60);
+                st.continue = (st.continue || []).filter(x => x.id !== p.imdb);
+                st.removedTs = stamp(st.removedTs, 'pos:' + p.imdb);
+                delete st.positions[p.imdb];
+            }
+        }
+        await pushAccount();
+        lastSyncSig = syncSig();
     }
-    S.state = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`) || S.state;
-    if (page === 'home') home();
-    // AUTOPLAY NEXT: finished a series episode (>=92%) with the setting on → roll the next one
-    if (PREF('autonext', true) && p.s && pos / dur >= 0.92 && cur?.meta?.videos) {
-        const eps = cur.meta.videos.filter(v => v.season > 0).sort((a, b) => a.season - b.season || a.episode - b.episode);
-        const i = eps.findIndex(x => x.season == p.s && x.episode == p.e);
-        const nxt = eps[i + 1];
-        if (nxt && (!nxt.released || new Date(nxt.released) <= new Date()))
-            pickStream(`${p.imdb}:${nxt.season}:${nxt.episode}`, `${cur.meta.name} S${nxt.season}E${nxt.episode}`, true);
-    }
+    if (page === 'home') { hero(pstate()); paintContinueRow(); }
+    if (page === 'detail' && cur?.meta && p.s) seasons(cur.meta);
+    // AUTOPLAY NEXT: an explicit next-click always advances; a natural finish advances
+    // when the setting is on and the episode really ended
+    if (p.s && (next || (PREF('autonext', true) && watchedNow && pos >= dur - 5)))
+        advanceNext(p);
 });
+function advanceNext(p) {
+    const nxt = p.next || nextEpisodeOf(p.sid);
+    if (!nxt || !cur?.meta) return;
+    episodePage(cur.t || { id: p.imdb, type: 'series' }, cur.meta, nxt, true);
+}
 const fmt = (s) => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(s % 60).padStart(2, '0'); };
 $('playing-stop').onclick = () => ck.stopPlay();
 
@@ -516,14 +854,12 @@ $('auth-signin').onclick = () => auth('signin');
 $('auth-signup').onclick = () => auth('signup');
 $('auth-guest').onclick = () => guest();
 $('back').onclick = () => { nav('home'); };
-$('signout').onclick = () => { localStorage.removeItem('ck'); location.reload(); };
 
 (async () => {
     SERVICE = await ck.service();
     const saved = JSON.parse(localStorage.getItem('ck') || 'null');
     if (saved?.token) { S.email = saved.email; S.token = saved.token; await bootstrap(); }
     else show('auth');
-    $('set-version').textContent = ck.platform === 'web' ? 'CouchKing Web' : 'CouchKing Desktop ' + await ck.version();
     checkUpdate();
 })();
 
@@ -555,63 +891,145 @@ async function checkUpdate() {
     } catch {}
 }
 
-// ---------- discover (Type / Category / Genre as real dropdown menus, like the apps) ----------
-let dType = 'movie', dCat = 'Popular', dGenre = 'All';
+// ---------- Discover (Stremio-style, EXACT app port): three DROPDOWNS — Type /
+// Catalog (MOVIE_CATS · TV_CATS) / Genre — deep pools (12 TMDB pages, 5 Cinemeta),
+// per-profile daily shuffle, rows of 15 ----------
+let dType = 'movie', dCatIx = 0, dGenre = null, dLoadToken = 0;
+const dCats = () => dType === 'movie' ? CK_CAT.MOVIE_CATS : CK_CAT.TV_CATS;
 function discoverPickers() {
     const bar = $('discover-pickers');
-    if (bar.childElementCount) return;
-    const mk = (labelText, opts, cur, on) => {
+    bar.innerHTML = '';
+    const mk = (labelText, opts, curV, on) => {
         const l = document.createElement('label'); l.textContent = labelText;
         const s = document.createElement('select');
         for (const o of opts) { const e = document.createElement('option'); e.value = o; e.textContent = o; s.appendChild(e); }
-        s.value = cur; s.onchange = () => on(s.value);
+        s.value = curV; s.onchange = () => on(s.value);
         bar.append(l, s);
     };
-    mk('Type', ['Movies', 'Series'], 'Movies', v => { dType = v === 'Series' ? 'series' : 'movie'; discover(); });
-    mk('Category', CK_CAT.DISCOVER_CATS.map(c => c.label), dCat, v => { dCat = v; discover(); });
-    mk('Genre', CK_CAT.GENRES, dGenre, v => { dGenre = v; discover(); });
+    mk('Type', ['Movies', 'TV Series'], dType === 'movie' ? 'Movies' : 'TV Series',
+        v => { dType = v === 'TV Series' ? 'series' : 'movie'; dCatIx = 0; discover(); });
+    mk('Catalog', dCats().map(c => c.label), dCats()[dCatIx].label,
+        v => { dCatIx = Math.max(0, dCats().findIndex(c => c.label === v)); discover(); });
+    mk('Genre', ['All genres', ...CK_CAT.GENRES.filter(g => g !== 'All')], dGenre || 'All genres',
+        v => { dGenre = v === 'All genres' ? null : v; discover(); });
 }
 async function discover() {
     discoverPickers();
+    const token = ++dLoadToken;
     const h = $('discover-rows'); h.innerHTML = '<div class="muted" style="padding:1rem 0">Loading…</div>';
-    const cat = CK_CAT.DISCOVER_CATS.find(c => c.label === dCat)[dType];
+    const cat = dCats()[Math.min(dCatIx, dCats().length - 1)];
+    const kind = dType === 'series' ? 'tv' : 'movie';
     let items;
-    if (dGenre !== 'All') {
-        const ids = dType === 'series' ? CK_CAT.TMDB_TV_GENRE_IDS : CK_CAT.TMDB_GENRE_IDS;
-        const gid = ids[dGenre];
-        items = gid ? await tmdbRow(dType === 'series' ? 'tv' : 'movie',
-            `discover/${dType === 'series' ? 'tv' : 'movie'}?sort_by=popularity.desc&vote_count.gte=40&with_genres=${gid}`, 6)
-            : await cineRow(dType, 'top', dGenre, 3);
-    } else if (cat.tmdb) items = await tmdbRow(dType === 'series' ? 'tv' : 'movie', cat.tmdb, 6);
-    else items = await cineRow(dType, cat.cine, null, 3);
+    if (cat.foryou) {
+        items = await forYouRow(kind);
+        if (!items.length) items = await tmdbRow(kind, `trending/${kind}/week`);
+    } else if (cat.tmdb) {
+        // deep pools + genre narrowing: discover queries filter server-side, the rest by
+        // TMDB genre ids on the results
+        let path = cat.tmdb;
+        const gid = dGenre ? (dType === 'series' ? CK_CAT.TMDB_TV_GENRE_IDS : CK_CAT.TMDB_GENRE_IDS)[dGenre] : null;
+        if (gid && path.startsWith('discover/')) path += `&with_genres=${gid}`;
+        items = await tmdbRow(kind, path, 12, 400);
+        if (gid && !path.includes('with_genres')) items = items.filter(t => (t.genres || []).includes(gid));
+        items = profileMix(items);
+    } else {
+        items = profileMix(await cineRow(dType, cat.cine, dGenre, 5));
+    }
+    if (token !== dLoadToken) return;
     h.innerHTML = '';
-    // grid rows of 15 like the TV app's Discover
+    if (!items.length) { h.innerHTML = '<p class="muted" style="padding-top:1rem">Nothing here.</p>'; return; }
+    // rows of 15, label on the first — same as the TV app's Discover
     for (let i = 0; i < items.length; i += 15)
-        addRow(i === 0 ? `${dCat}${dGenre !== 'All' ? ' · ' + dGenre : ''}` : '', items.slice(i, i + 15), null, h);
+        addRow(i === 0 ? `${cat.label}${dGenre ? ' · ' + dGenre : ''}` : '', items.slice(i, i + 15), null, h);
 }
 
-// ---------- library ----------
-let libType = 'All', libSort = 'Recent';
+// ---------- Library (Stremio-style: search + type chips + sort cycle + rows) ----------
+// Library = what you ADDED, nothing else. Continue Watching owns in-progress; the
+// Watched/Unwatched sorts still work within your list.
+let libFilter = 'All', libSort = 'Recent', libQuery = '';
+const LIB_SORTS = ['Recent', 'New episodes', 'A–Z', 'Z–A', 'Watched', 'Unwatched'];
 function library() {
-    const h = $('library-rows'); h.innerHTML = '';
-    if (S.guest) { h.innerHTML = '<p class="muted" style="padding-top:1rem">Your library lives on your account — sign in to see it.</p>'; return; }
-    const st = pstate();
-    const bar = document.createElement('div'); bar.className = 'pickers';
-    const mk = (labelText, opts, cur, on) => {
-        const l = document.createElement('label'); l.textContent = labelText;
-        const s = document.createElement('select');
-        for (const o of opts) { const e = document.createElement('option'); e.value = o; e.textContent = o; s.appendChild(e); }
-        s.value = cur; s.onchange = () => on(s.value);
-        bar.append(l, s);
+    const body = $('library-body');
+    body.innerHTML = '';
+    if (S.guest) { body.innerHTML = '<p class="muted" style="padding-top:1rem">Your library lives on your account — sign in to see it.</p>'; return; }
+    const input = document.createElement('input');
+    input.type = 'search'; input.placeholder = 'Search your library…'; input.value = libQuery;
+    body.appendChild(input);
+    const controls = document.createElement('div'); controls.className = 'lib-controls';
+    const gridHolder = document.createElement('div');
+    body.append(controls, gridHolder);
+    const render = async () => {
+        const st = pstate();
+        gridHolder.innerHTML = '';
+        const seen = new Set();
+        const all = (st.watchlist || []).filter(t => t.id && !seen.has(t.id) && seen.add(t.id));
+        let list = libFilter === 'Movies' ? all.filter(t => t.type !== 'series')
+            : libFilter === 'Shows' ? all.filter(t => t.type === 'series') : all;
+        if (libQuery) list = list.filter(t => (t.name || '').toLowerCase().includes(libQuery.toLowerCase()));
+        const watched = new Set(st.watchedIds || []);
+        if (libSort === 'A–Z') list = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        else if (libSort === 'Z–A') list = [...list].sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+        else if (libSort === 'Watched') list = list.filter(t => watched.has(t.id));
+        else if (libSort === 'Unwatched') list = list.filter(t => !watched.has(t.id));
+        // Recent = natural order (most-recent adds first)
+        const paint = (counts) => {
+            gridHolder.innerHTML = '';
+            let shown = list;
+            if (libSort === 'New episodes' && counts) {
+                // a real FILTER: only shows that actually have unwatched new episodes,
+                // most new first — not the whole library re-sorted
+                shown = list.filter(t => (counts[t.id] || 0) > 0).sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0));
+                if (!shown.length) {
+                    gridHolder.innerHTML = '<p class="muted" style="padding-top:1rem">No new episodes right now — shows you track will appear here when new episodes air.</p>';
+                    return;
+                }
+            }
+            if (!shown.length) {
+                gridHolder.innerHTML = `<p class="muted" style="padding-top:1rem">${!libQuery && !['Watched', 'Unwatched'].includes(libSort)
+                    ? 'Your library is empty. Add titles with the + on any movie or show — they’ll live here.' : 'Nothing matches'}</p>`;
+                return;
+            }
+            // "All" = Movies section first, Shows underneath; rows of 15 everywhere
+            const rowsOf = (label, l) => {
+                for (let i = 0; i < l.length; i += 15)
+                    addRow(i === 0 ? label : '', l.slice(i, i + 15),
+                        (t) => ({ newEps: counts ? (counts[t.id] || 0) : 0 }), gridHolder);
+            };
+            if (libFilter === 'All') {
+                const movies = shown.filter(t => t.type !== 'series');
+                const showsL = shown.filter(t => t.type === 'series');
+                if (movies.length) rowsOf('Movies', movies);
+                if (showsL.length) rowsOf('Shows', showsL);
+            } else rowsOf(libFilter, shown);
+        };
+        paint(null);
+        // new-episode counts land async and re-paint with badges (and power the filter)
+        const counts = {};
+        await Promise.all(list.filter(t => t.type === 'series').map(async t => { counts[t.id] = await newEpisodeCount(t.id); }));
+        if ($('library-body') === body && (Object.values(counts).some(c => c > 0) || libSort === 'New episodes')) paint(counts);
     };
-    mk('Show', ['All', 'Movies', 'Shows'], libType, v => { libType = v; library(); });
-    mk('Sort', ['Recent', 'A-Z'], libSort, v => { libSort = v; library(); });
-    h.appendChild(bar);
-    const fil = (l) => (l || []).filter(x => libType === 'All' || (libType === 'Movies' ? x.type !== 'series' : x.type === 'series'));
-    const srt = (l) => libSort === 'A-Z' ? [...l].sort((a, b) => (a.name || '').localeCompare(b.name || '')) : l;
-    addRow('My List', srt(fil(st.watchlist)), null, h);
-    addRow('Watched', srt(fil(st.watchedTitles)), null, h);
-    if (h.childElementCount <= 1) h.insertAdjacentHTML('beforeend', '<p class="muted" style="padding-top:1rem">Nothing in your library yet — add shows and movies from their pages.</p>');
+    // chips repaint IN PLACE — rebuilding stole the search cursor
+    const paintControls = () => {
+        controls.innerHTML = '';
+        for (const f of ['All', 'Movies', 'Shows']) {
+            const chip = document.createElement('button');
+            chip.className = 'chip' + (f === libFilter ? ' on' : '');
+            chip.textContent = f;
+            chip.onclick = () => { libFilter = f; paintControls(); render(); };
+            controls.appendChild(chip);
+        }
+        const sortChip = document.createElement('button');
+        sortChip.className = 'chip sort';
+        sortChip.textContent = `↕ ${libSort}`;
+        sortChip.onclick = () => {
+            libSort = LIB_SORTS[(LIB_SORTS.indexOf(libSort) + 1) % LIB_SORTS.length];
+            sortChip.textContent = `↕ ${libSort}`; render();
+        };
+        controls.appendChild(sortChip);
+    };
+    let t = null;
+    input.oninput = () => { clearTimeout(t); t = setTimeout(() => { libQuery = input.value.trim(); render(); }, 250); };
+    paintControls(); render();
 }
 
 // ---------- rail ----------
@@ -623,9 +1041,11 @@ function pstate() { return S.state.states?.[S.pid] || S.state; }
 const AVATARS = ['👤', '😀', '😎', '👑', '🐱', '🐶', '🦊', '🐼', '👻', '🤖', '🦄', '🍿'];
 $('rail-profile').onclick = () => { if (!S.guest && S.token) profileManager(); };
 function switchProfile(p) {
-    S.pid = p.id; S.user = p.name; localStorage.setItem('ck-pid', p.id);
+    S.pid = p.id; S.user = p.name; S.useg = `${p.name} #${String(p.id).slice(-4)}`;
+    localStorage.setItem('ck-pid', p.id);
     $('prof-name').textContent = p.name; $('prof-avatar').textContent = p.avatar || '👤';
     applyAccountPrefs();
+    for (const k of Object.keys(newEpCache)) delete newEpCache[k];
     home(); if (page === 'library') library();
 }
 function profileManager() {
@@ -704,6 +1124,13 @@ async function pushAccount() {
     await j(`${SERVICE}/tvapp/state`, { method: 'POST', body: { email: S.email, token: S.token, appVer: APPVER(), state: S.state } });
 }
 function stamp(map, id) { const m = map || {}; m[id] = Date.now(); return m; }
+// most-recent-first Continue list, cap 12 — same shape Store.pushContinue writes
+function pushContinueLocal(t) {
+    const st = pstate();
+    st.continue = [{ id: t.id, type: t.type, name: t.name, poster: t.poster || '' },
+        ...(st.continue || []).filter(x => x.id !== t.id)].slice(0, 12);
+    st.addedTs = stamp(st.addedTs, t.id);
+}
 function toggleList(t) {
     const st = pstate(); st.watchlist = st.watchlist || [];
     const has = st.watchlist.some(x => x.id === t.id);
@@ -719,7 +1146,8 @@ function toggleWatchedTitle(t) {
     pushAccount(); return !has;
 }
 
-// ---------- settings — SAME set as the phone/Firestick, synced through the account ----------
+// ---------- settings — EXACT page parity with the phone/Firestick (MainActivity
+// showSettings / showPlayerSettings / showShelfPicker / showAddons / showAbout) ----------
 // local key ↔ account prefs key (the tvstate prefs blob every device shares)
 const PREF_MAP = { autonext: 'autoplayNext', subscale: 'subScale', blur: 'blurUnwatched', titles: 'showTitles',
                    seek: 'seekStep', sublang: 'subLang', audlang: 'audioLang', subbg: 'subBg',
@@ -740,40 +1168,179 @@ function applyAccountPrefs() {
     for (const [loc, acc] of Object.entries(PREF_MAP))
         if (pr[acc] !== undefined) localStorage.setItem('ckp-' + loc, JSON.stringify(pr[acc]));
 }
+// one settings row: label left, value right — the app's settingRow2
+function settingRow(label, value, onClick) {
+    const r = document.createElement('div'); r.className = 'srow';
+    r.innerHTML = `<span class="srow-label">${label}</span><span class="srow-value">${value || ''}</span><span class="srow-chev">›</span>`;
+    if (onClick) r.onclick = onClick; else r.classList.add('static');
+    return r;
+}
+function sectionText(t) {
+    const s = document.createElement('div'); s.className = 'ssection'; s.textContent = t;
+    return s;
+}
 function renderSettings() {
-    const holder = $('settings-extra'); if (!holder) return;
-    holder.innerHTML = '';
-    const rows = [
-        ['Autoplay next episode', 'autonext', true],
-        ['Show titles under posters', 'titles', true],
-        ['Blur unwatched episode thumbnails', 'blur', false],
-        ['Subtitle size', 'subscale', 1.0, [['Small', .8], ['Normal', 1.0], ['Large', 1.3], ['Giant', 1.7]]],
-        ['Subtitle language', 'sublang', 'en', [['English', 'en'], ['Spanish', 'es'], ['French', 'fr'], ['German', 'de'], ['Portuguese', 'pt']]],
-        ['Audio language', 'audlang', 'en', [['English', 'en'], ['Spanish', 'es'], ['French', 'fr'], ['German', 'de'], ['Japanese', 'ja']]],
-        ['Subtitle background', 'subbg', false],
-        ['Subtitle outline', 'suboutline', true],
-        ['Subtitle position', 'subpos', 0, [['Normal', 0], ['Raised', 1], ['High', 2]]],
-        ['Skip step', 'seek', 10, [['5s', 5], ['10s', 10], ['30s', 30]]],
-    ];
-    for (const [label, key, dflt, opts] of rows) {
-        const card = document.createElement('div'); card.className = 'set-card';
-        const cur = PREF(key, dflt);
-        card.innerHTML = `<b>${label}</b>`;
-        if (!opts) {
-            const b = document.createElement('button'); b.className = cur ? 'primary small' : 'ghost small';
-            b.textContent = cur ? 'On' : 'Off';
-            b.onclick = () => { SETPREF(key, !PREF(key, dflt)); renderSettings(); };
-            card.appendChild(b);
-        } else {
-            const wrap = document.createElement('div');
-            for (const [name, val] of opts) {
-                const b = document.createElement('button'); b.className = (cur === val ? 'primary' : 'ghost') + ' small';
-                b.style.marginLeft = '.4rem'; b.textContent = name;
-                b.onclick = () => { SETPREF(key, val); renderSettings(); };
-                wrap.appendChild(b);
-            }
-            card.appendChild(wrap);
-        }
-        holder.appendChild(card);
+    const body = $('settings-body');
+    body.innerHTML = '';
+    const h = document.createElement('h2'); h.textContent = 'Settings'; body.appendChild(h);
+    // user card — avatar circle + who you are + access line (Stremio's account header)
+    const card = document.createElement('div'); card.className = 'user-card';
+    const statusLine = S.guest || !S.email ? 'Tap to sign in'
+        : S.access?.daysLeft > 3650 ? 'Lifetime access'
+        : (S.access?.expires && S.access?.daysLeft >= 0) ? `Access through ${S.access.expires} · ${S.access.daysLeft} days left`
+        : 'Signed in';
+    card.innerHTML = `<div class="uc-avatar">${(S.email || 'G')[0].toUpperCase()}</div>
+        <div><div class="uc-email">${S.email || 'Guest'}</div><div class="uc-sub muted">${statusLine}</div></div>`;
+    if (S.guest || !S.email) card.onclick = () => { localStorage.removeItem('ck'); location.reload(); };
+    body.appendChild(card);
+    if (!S.guest && S.email) {
+        body.appendChild(settingRow('Sync library now', '', async () => {
+            toast('Syncing…');
+            const st = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`);
+            if (st) { S.state = st; applyAccountPrefs(); lastSyncSig = syncSig(); }
+            toast('Library synced');
+        }));
+        body.appendChild(settingRow('Sign out', '', () => { localStorage.removeItem('ck'); location.reload(); }));
+        body.appendChild(settingRow('Delete account', '', async () => {
+            if (!confirm('Delete account?\n\nThis permanently deletes your account and synced library on the server.')) return;
+            const r = await j(`${SERVICE}/tvapp/delete`, { method: 'POST', body: { email: S.email, token: S.token } });
+            if (!r?.ok) { toast("Couldn't delete — check your connection"); return; }
+            localStorage.removeItem('ck'); location.reload();
+        }));
     }
+    body.appendChild(sectionText('SETTINGS'));
+    const st = pstate();
+    const shelves = (st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES;
+    body.appendChild(settingRow('Home screen', `${shelves.length} shelves`, () => shelfPicker()));
+    body.appendChild(settingRow('Blur unwatched episode images', PREF('blur', false) ? 'On' : 'Off',
+        () => { SETPREF('blur', !PREF('blur', false)); renderSettings(); }));
+    body.appendChild(settingRow('Show titles under posters', PREF('titles', true) ? 'On' : 'Off',
+        () => { SETPREF('titles', !PREF('titles', true)); renderSettings(); }));
+    // Player settings only exist when there's something to PLAY
+    if (hasService()) body.appendChild(settingRow('Player', '', () => playerSettings()));
+    body.appendChild(settingRow('Addons',
+        S.guest ? 'sign in to add' : `${S.addons.length} added`, () => addonsPage()));
+    body.appendChild(settingRow('Legal & About', '', () => aboutPage()));
+}
+function settingsSub(title, build) {
+    const body = $('settings-body');
+    body.innerHTML = '';
+    const back = document.createElement('button'); back.className = 'ghost small'; back.textContent = '‹ Back';
+    back.onclick = () => renderSettings();
+    body.appendChild(back);
+    const h = document.createElement('h2'); h.textContent = title; body.appendChild(h);
+    build(body);
+}
+/** Player page (subtitles / audio / playback) — same rows as the Firestick's. */
+function playerSettings() {
+    settingsSub('Player', (body) => {
+        body.appendChild(sectionText('SUBTITLES'));
+        // live sample: shows exactly what the options below produce
+        const sample = document.createElement('div'); sample.className = 'sub-sample';
+        const paintSample = () => {
+            const scale = PREF('subscale', 1.0);
+            sample.innerHTML = `<span style="font-size:${(15 * scale).toFixed(1)}px;
+                ${PREF('suboutline', true) ? 'text-shadow:0 0 5px #000,1px 1px 2px #000;' : ''}
+                ${PREF('subbg', false) ? 'background:#000000B3;padding:2px 8px;' : ''}
+                margin-bottom:${({ 0: 10, 1: 26, 2: 46 })[PREF('subpos', 0)] || 10}px">This is what subtitles will look like</span>`;
+        };
+        paintSample();
+        body.appendChild(sample);
+        const sizes = [['Small', 0.8], ['Normal', 1.0], ['Large', 1.3], ['Huge', 1.6]];
+        const rebuild = () => playerSettings();
+        const curSize = sizes.find(x => Math.abs(x[1] - PREF('subscale', 1.0)) < .01) || sizes[1];
+        body.appendChild(settingRow('Subtitle size', curSize[0], () => {
+            const next = sizes[(sizes.indexOf(curSize) + 1) % sizes.length];
+            SETPREF('subscale', next[1]); rebuild();
+        }));
+        body.appendChild(settingRow('Subtitles language', PREF('sublang', 'en') === 'off' ? 'Off' : 'English', () => {
+            SETPREF('sublang', PREF('sublang', 'en') === 'en' ? 'off' : 'en'); rebuild();
+        }));
+        body.appendChild(settingRow('Subtitle background', PREF('subbg', false) ? 'Black box' : 'None', () => {
+            SETPREF('subbg', !PREF('subbg', false)); rebuild();
+        }));
+        body.appendChild(settingRow('Subtitle outline', PREF('suboutline', true) ? 'On' : 'Off', () => {
+            SETPREF('suboutline', !PREF('suboutline', true)); rebuild();
+        }));
+        body.appendChild(settingRow('Subtitle position', ['Normal', 'Raised', 'High'][PREF('subpos', 0)] || 'Normal', () => {
+            SETPREF('subpos', (PREF('subpos', 0) + 1) % 3); rebuild();
+        }));
+        body.appendChild(sectionText('AUDIO'));
+        body.appendChild(settingRow('Preferred audio', PREF('audlang', 'en') === 'orig' ? 'Original' : 'English', () => {
+            SETPREF('audlang', PREF('audlang', 'en') === 'en' ? 'orig' : 'en'); rebuild();
+        }));
+        body.appendChild(sectionText('PLAYBACK'));
+        body.appendChild(settingRow('Autoplay next episode', PREF('autonext', true) ? 'On' : 'Off', () => {
+            SETPREF('autonext', !PREF('autonext', true)); rebuild();
+        }));
+        body.appendChild(settingRow('Seek step', `${PREF('seek', 10)}s`, () => {
+            const steps = [5, 10, 15, 30];
+            SETPREF('seek', steps[(steps.indexOf(PREF('seek', 10)) + 1) % steps.length]); rebuild();
+        }));
+    });
+}
+/** Home-shelf picker: grouped sections of pill chips that flip IN PLACE. */
+function shelfPicker() {
+    settingsSub('Home shelves', (body) => {
+        const note = document.createElement('p'); note.className = 'muted';
+        note.textContent = 'Click to turn rows on or off — Home updates the moment you go back. For You is always on.';
+        body.appendChild(note);
+        const st = pstate();
+        const enabled = new Set((st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES);
+        const persist = () => {
+            st.shelves = CK_CAT.SHELF_CATALOG.map(r => r.label).filter(l => enabled.has(l));
+            pushAccount();
+        };
+        const G = CK_CAT.SHELF_GROUPS;
+        const inG = (label, g) => G[g].includes(label);
+        const section = (title, rows) => {
+            if (!rows.length) return;
+            body.appendChild(sectionText(title));
+            const wrap = document.createElement('div'); wrap.className = 'chip-grid';
+            for (const r of rows) {
+                const chip = document.createElement('button');
+                const paint = () => { chip.className = 'chip shelf' + (enabled.has(r.label) ? ' on' : ''); };
+                chip.textContent = r.label;
+                chip.onclick = () => { enabled.has(r.label) ? enabled.delete(r.label) : enabled.add(r.label); persist(); paint(); };
+                paint();
+                wrap.appendChild(chip);
+            }
+            body.appendChild(wrap);
+        };
+        const all = CK_CAT.SHELF_CATALOG;
+        section('POPULAR & NEW', all.filter(r => !inG(r.label, 'providers') && !inG(r.label, 'channels') && !inG(r.label, 'genres') && !inG(r.label, 'moods')));
+        section('MOODS & SEASONS', all.filter(r => inG(r.label, 'moods')));
+        section('STREAMING SERVICES', all.filter(r => inG(r.label, 'providers')));
+        section('CHANNELS & ANIME', all.filter(r => inG(r.label, 'channels')));
+        section('GENRES', all.filter(r => inG(r.label, 'genres')));
+    });
+}
+function addonsPage() {
+    settingsSub('Addons', (body) => {
+        if (S.guest) {
+            const p = document.createElement('p'); p.className = 'muted';
+            p.textContent = 'Sign in to add addons and start streaming.';
+            body.appendChild(p);
+            const b = document.createElement('button'); b.className = 'primary'; b.textContent = 'Sign in';
+            b.onclick = () => { localStorage.removeItem('ck'); location.reload(); };
+            body.appendChild(b);
+            return;
+        }
+        body.appendChild(sectionText('YOUR ADDONS'));
+        if (!S.addons.length) {
+            const p = document.createElement('p'); p.className = 'muted';
+            p.textContent = 'No addons yet — the addon assigned to your account installs automatically once you’re enabled.';
+            body.appendChild(p);
+        }
+        for (const a of S.addons) body.appendChild(settingRow(a.name || 'Addon', 'Connected', null));
+    });
+}
+function aboutPage() {
+    settingsSub('Legal & About', async (body) => {
+        body.appendChild(settingRow('Terms & Conditions', '', () => ck.openExternal('https://couchking.app/terms')));
+        body.appendChild(settingRow('Privacy Policy', '', () => ck.openExternal('https://couchking.app/privacy')));
+        const vRow = settingRow('Version', ck.platform === 'web' ? 'web' : '…', null);
+        body.appendChild(vRow);
+        if (ck.platform !== 'web') vRow.querySelector('.srow-value').textContent = await ck.version();
+    });
 }

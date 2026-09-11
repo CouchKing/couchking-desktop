@@ -52,29 +52,29 @@
         </div>
       </section>
 
+      <!-- person page (actor/director from search) -->
+      <section id="view-person" class="page hidden"><div class="page-pad" id="person-body"></div></section>
+
       <section id="view-discover" class="page hidden">
         <div class="pickers" id="discover-pickers"></div>
         <main class="rows" id="discover-rows"></main>
       </section>
 
-      <section id="view-library" class="page hidden"><main class="rows" id="library-rows"></main></section>
+      <section id="view-library" class="page hidden"><div class="page-pad" id="library-body"></div></section>
 
-      <section id="view-settings" class="page hidden">
-        <div class="page-pad">
-          <h2>Settings</h2>
-          <div class="set-card"><b>Account</b><span id="set-email" class="muted"></span></div>
-          <div class="set-card"><b>Service</b><span id="set-service" class="muted"></span></div>
-          <div id="settings-extra"></div>
-          <div class="set-card"><b>Version</b><span class="muted" id="set-version">CouchKing</span></div>
-          <div class="set-card"><b>Legal</b><span><a href="#" data-ext="https://couchking.app/terms">Terms</a> · <a href="#" data-ext="https://couchking.app/privacy">Privacy</a></span></div>
-          <button id="signout" class="ghost">Sign out</button>
-        </div>
-      </section>
+      <section id="view-settings" class="page hidden"><div class="page-pad" id="settings-body"></div></section>
 
       <section id="view-detail" class="page detail-page hidden">
         <div id="detail-backdrop"></div>
         <button id="back" class="ghost small">‹ Back</button>
         <div id="detail-body"></div>
+      </section>
+
+      <!-- Stremio-style episode page: logo / facts / description / streams -->
+      <section id="view-episode" class="page detail-page hidden">
+        <div id="episode-backdrop"></div>
+        <button id="ep-back" class="ghost small">‹ Back</button>
+        <div id="episode-body"></div>
       </section>
     </div>
   </div>

@@ -79,13 +79,55 @@ const CK_CAT = (() => {
     const DEFAULT_SHELVES = ["Trending Today", "Trending Series", "Popular Movies", "Popular Series",
         "New in Theaters", "Coming Soon", "Netflix", "Hulu", "Disney+", "Max", "Prime Video",
         "Apple TV+", "Paramount+", "Peacock", "Top Rated Movies", "Top Rated Series", "True Crime"];
-    const DISCOVER_CATS = [
-        { label: "Popular", movie: { cine: "top" }, series: { cine: "top" } },
-        { label: "Trending", movie: { tmdb: "trending/movie/week" }, series: { tmdb: "trending/tv/week" } },
-        { label: "Top Rated", movie: { cine: "imdbRating" }, series: { cine: "imdbRating" } },
-        { label: "New in Theaters", movie: { tmdb: nowPlaying() }, series: { tmdb: "discover/tv?sort_by=first_air_date.desc&vote_count.gte=25" } },
-        { label: "Coming Soon", movie: { tmdb: "movie/upcoming" }, series: { tmdb: "discover/tv?sort_by=first_air_date.desc&vote_count.gte=5" } },
+    // Discover catalogs — EXACT port of Discovery.kt MOVIE_CATS / TV_CATS (one dropdown's
+    // worth per type, same labels, same order, same queries)
+    const MOVIE_CATS = [
+        { label: "Popular", cine: "top" },
+        { label: "Trending", tmdb: "trending/movie/week" },
+        { label: "For You", foryou: true },
+        { label: "New", cine: "year" },
+        { label: "Top Rated", cine: "imdbRating" },
+        { label: "New in Theaters", tmdb: nowPlaying() },
+        { label: "🍅 Certified Fresh", tmdb: "discover/movie?vote_average.gte=7.4&vote_count.gte=300&sort_by=popularity.desc" },
+        { label: "Netflix", tmdb: prov("movie", "8") },
+        { label: "Hulu", tmdb: prov("movie", "15") },
+        { label: "Max", tmdb: prov("movie", "1899") },
+        { label: "Prime Video", tmdb: prov("movie", "9") },
+        { label: "Apple TV+", tmdb: prov("movie", "350") },
+        { label: "Disney+", tmdb: prov("movie", "337") },
+        { label: "Paramount+", tmdb: prov("movie", "2303|2616|531") },
+        { label: "Peacock", tmdb: prov("movie", "386") },
     ];
+    const TV_CATS = [
+        { label: "Popular", cine: "top" },
+        { label: "Trending", tmdb: "trending/tv/week" },
+        { label: "For You", foryou: true },
+        { label: "New", cine: "year" },
+        { label: "Top Rated", cine: "imdbRating" },
+        { label: "New Shows", tmdb: "discover/tv?sort_by=first_air_date.desc&vote_count.gte=25" },
+        { label: "Anime", tmdb: "discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc" },
+        { label: "Netflix", tmdb: prov("tv", "8") },
+        { label: "Hulu", tmdb: prov("tv", "15") },
+        { label: "Max", tmdb: prov("tv", "1899") },
+        { label: "Prime Video", tmdb: prov("tv", "9") },
+        { label: "Apple TV+", tmdb: prov("tv", "350") },
+        { label: "Disney+", tmdb: prov("tv", "337") },
+        { label: "Paramount+", tmdb: prov("tv", "2303|2616|531") },
+        { label: "Peacock", tmdb: prov("tv", "386") },
+    ];
+    // shelf-picker groupings — same buckets as the Firestick's Home-shelves page
+    const SHELF_GROUPS = {
+        providers: ["Netflix", "Hulu", "Disney+", "Max", "Prime Video", "Apple TV+", "Paramount+", "Peacock"],
+        channels: ["Hallmark", "Hallmark New", "Hallmark Series", "Hallmark Christmas Movies",
+            "Anime", "Anime Movies",
+            "Marvel: Release Order", "Marvel: Chronological", "Marvel Movies", "Marvel Series", "X-Men Movies"],
+        moods: ["Christmas Movies", "Halloween Movies", "Date Night", "True Crime",
+            "Based on a True Story", "Classics", "90s Throwbacks", "Kids Movies", "Kids TV",
+            "Superheroes", "Zombies", "Time Travel", "Feel-Good", "Tearjerkers",
+            "Summer Blockbusters", "Fantasy Worlds", "War Movies", "Musicals", "Cozy Mystery Series"],
+        genres: ["Action", "Comedy", "Horror", "Sci-Fi", "Romance", "Thriller",
+            "Drama Series", "Crime Series", "Reality", "Documentary", "Family"],
+    };
     const GENRES = ["All", "Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama",
         "Family", "Fantasy", "History", "Horror", "Music", "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western"];
     const TMDB_GENRE_IDS = { Action: 28, Adventure: 12, Animation: 16, Comedy: 35, Crime: 80, Documentary: 99,
@@ -94,5 +136,5 @@ const CK_CAT = (() => {
     const TMDB_TV_GENRE_IDS = { Action: 10759, Adventure: 10759, Animation: 16, Comedy: 35, Crime: 80,
         Documentary: 99, Drama: 18, Family: 10751, Fantasy: 10765, Mystery: 9648, Romance: 10749,
         "Sci-Fi": 10765, War: 10768, Western: 37 };
-    return { SHELF_CATALOG, DEFAULT_SHELVES, DISCOVER_CATS, GENRES, TMDB_GENRE_IDS, TMDB_TV_GENRE_IDS };
+    return { SHELF_CATALOG, DEFAULT_SHELVES, MOVIE_CATS, TV_CATS, SHELF_GROUPS, GENRES, TMDB_GENRE_IDS, TMDB_TV_GENRE_IDS };
 })();

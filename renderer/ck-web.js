@@ -4,21 +4,30 @@
 //
 // Playback goes through the service's /webplay remux (video copied, audio → AAC the
 // browser can decode, MKV → fragmented MP4) with custom controls styled like the TV
-// player. Seeking reopens the stream at the new offset (fMP4 can't range-seek).
+// player: purple time bar, labeled buttons (word ABOVE icon), top overlay with clock +
+// "Ends h:mm", Skip-intro from the learned window, and the UP NEXT card at credits time.
+// Seeking reopens the stream at the new offset (fMP4 can't range-seek) — every position
+// shown/reported is offset + video.currentTime, duration from /webplay/probe.
 (function () {
     if (window.ck) return;
     const b64u = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     const fmt = (s) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(s % 60).padStart(2, '0'); };
+    const clock = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     let posCb = null, exitCb = null, player = null, state = null;
 
-    function closePlayer(fireExit) {
+    function closePlayer(fireExit, extra) {
         if (!player) return;
         const st = state; state = null;
         const v = player.querySelector('video');
+        // read the position BEFORE load() — load() resets currentTime to 0 and used to
+        // collapse the exit beacon's saved position (the resume/false-watched bug)
+        const posAtExit = st ? st.offset + (v?.currentTime || 0) : 0;
+        clearInterval(st?.tick);
         try { v.pause(); v.removeAttribute('src'); v.load(); } catch {}
         player.remove(); player = null;
         document.body.style.overflow = '';
-        if (fireExit && exitCb && st) exitCb({ pos: st.offset + (v?.currentTime || 0), dur: st.dur || 0 });
+        if (fireExit && exitCb && st)
+            exitCb({ pos: posAtExit, dur: st.dur || 0, lastCue: st.lastCue || 0, ...(extra || {}) });
     }
 
     async function service() {
@@ -43,17 +52,30 @@
                 return { ok: r.ok, status: r.status, text: await r.text() };
             } catch (e) { return { ok: false, status: 0, text: String(e).slice(0, 200) }; }
         },
-        play: async ({ url, title, startSec = 0, seekStep = 10, sid = '', subScale = 1.0, subLang = 'en', subBg = false }) => {
+        play: async ({ url, title, startSec = 0, seekStep = 10, sid = '',
+                       subScale = 1.0, subLang = 'en', subBg = false, subOutline = true, subPos = 0,
+                       introFromMs = -1, introToMs = -1, creditsMs = 0,
+                       nextLabel = '', hasNext = false, autonext = true }) => {
             closePlayer(false);
             const SVC = await service();
             const u = b64u(url);
-            state = { offset: startSec, dur: 0, u, SVC, step: seekStep || 10 };
+            state = { offset: startSec, dur: 0, u, SVC, step: seekStep || 10,
+                      cues: [], lastCue: 0, introHandled: false, nextShown: false, speed: 1 };
             player = document.createElement('div');
             player.id = 'web-player';
             player.innerHTML = `
                 <video autoplay playsinline crossorigin="anonymous"></video>
+                <div class="wp-cue"></div>
                 <div class="wp-ui">
-                  <div class="wp-top"><button class="wp-btn wp-back">‹ Back</button><span class="wp-title"></span></div>
+                  <div class="wp-top">
+                    <button class="wp-btn wp-back">‹ Back</button><span class="wp-title"></span>
+                    <span class="wp-right"><span class="wp-clock"></span><span class="wp-ends"></span></span>
+                  </div>
+                  <button class="wp-skip hidden">Skip intro ⏭</button>
+                  <div class="wp-next hidden">
+                    <div class="wpn-tag">UP NEXT</div><div class="wpn-title"></div>
+                    <div class="wpn-btns"><button class="wpn-play">▶ Play now</button><button class="wpn-dismiss">Dismiss</button></div>
+                  </div>
                   <div class="wp-bottom">
                     <div class="wp-bar"><div class="wp-fill"></div><div class="wp-dot"></div></div>
                     <div class="wp-times"><span class="wp-cur">0:00</span><span class="wp-dur">–:––</span></div>
@@ -61,14 +83,18 @@
                       <div class="wp-cell"><span>Back ${seekStep}s</span><button class="wp-btn wp-rew">⏪</button></div>
                       <div class="wp-cell"><span>Play / Pause</span><button class="wp-btn wp-pp">⏸</button></div>
                       <div class="wp-cell"><span>Forward ${seekStep}s</span><button class="wp-btn wp-fwd">⏩</button></div>
+                      ${hasNext ? '<div class="wp-cell"><span>Next</span><button class="wp-btn wp-nextbtn">⏭</button></div>' : ''}
                       <div class="wp-cell"><span>Subtitles</span><button class="wp-btn wp-subs">💬</button></div>
-                      <div class="wp-cell"><span>Size</span><button class="wp-btn wp-size">Aa</button></div>
-                      <div class="wp-cell"><span>Scaling</span><button class="wp-btn wp-scale">⤢</button></div>
+                      <div class="wp-cell"><span>Sub Size</span><button class="wp-btn wp-subsize">Aa</button></div>
+                      <div class="wp-cell"><span>Size</span><button class="wp-btn wp-scale">⤢</button></div>
+                      <div class="wp-cell"><span>Speed</span><button class="wp-btn wp-speed">1×</button></div>
+                      <div class="wp-cell"><span>Info</span><button class="wp-btn wp-info">ⓘ</button></div>
                       <div class="wp-cell"><span>Volume</span><input class="wp-vol" type="range" min="0" max="1" step=".05" value="1"></div>
                       <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">⛶</button></div>
                     </div>
                   </div>
                   <div class="wp-menu hidden"></div>
+                  <div class="wp-infobox hidden"></div>
                   <div class="wp-hint hidden">Trouble playing? Some formats need the free desktop app —
                     <a href="https://couchking.app/downloads" target="_blank">couchking.app/downloads</a></div>
                 </div>`;
@@ -78,37 +104,58 @@
             const src = (t) => `${SVC}/webplay?u=${u}&t=${Math.floor(t)}`;
             v.src = src(startSec);
 
-            // ---- subtitles: OpenSubtitles v3 feed (same source as the TV app) served
-            // through our /websub CORS+VTT converter, cue times shifted by stream offset ----
-            const cueStyle = document.createElement('style'); player.appendChild(cueStyle);
-            const SIZES = [[.8, 'Small'], [1.0, 'Normal'], [1.3, 'Large'], [1.7, 'Giant']];
-            let sizeIx = Math.max(0, SIZES.findIndex(x => x[0] === subScale));
-            const setCue = () => { cueStyle.textContent =
-                `#web-player video::cue{font-size:${(4.2 * SIZES[sizeIx][0]).toFixed(1)}vh;` +
-                `background:rgba(0,0,0,${subBg ? .75 : .001});}`; };
-            setCue();
-            let subList = [], curSub = null, subVtt = '';
-            const shiftVtt = (txt, off) => txt.replace(/(\d{2}):(\d{2}):(\d{2})\.(\d{3})/g, (m, h, mn, sc, ms) => {
-                let t = (+h * 3600 + +mn * 60 + +sc) + +ms / 1000 - off;
-                if (t < 0) t = 0;
-                const P = (n, w) => String(n).padStart(w, '0');
-                return `${P(Math.floor(t / 3600), 2)}:${P(Math.floor(t % 3600 / 60), 2)}:${P(Math.floor(t % 60), 2)}.${P(Math.round(t % 1 * 1000), 3)}`;
-            });
-            const applySub = () => {
-                [...v.querySelectorAll('track')].forEach(t => t.remove());
-                if (!curSub || !subVtt || !state) return;
-                const tr = document.createElement('track');
-                tr.kind = 'subtitles'; tr.label = curSub.lang || 'subs'; tr.default = true;
-                tr.src = URL.createObjectURL(new Blob([shiftVtt(subVtt, state.offset)], { type: 'text/vtt' }));
-                v.appendChild(tr);
-                const show = () => { try { tr.track.mode = 'showing'; } catch {} };
-                tr.addEventListener('load', show); setTimeout(show, 500);
+            // ---- subtitles: OpenSubtitles v3 feed (same source as the TV app) via our
+            // /websub CORS+VTT converter. Rendered by US into a centered, readable-width
+            // block (never native full-screen-wide cues); cue times are ABSOLUTE, compared
+            // against offset+currentTime, so seeking never needs a re-shift. ----
+            const cueEl = player.querySelector('.wp-cue');
+            const SIZES = [[.8, 'Small'], [1.0, 'Normal'], [1.3, 'Large'], [1.6, 'Huge']];
+            let sizeIx = Math.max(0, SIZES.findIndex(x => Math.abs(x[0] - subScale) < .01));
+            const styleCue = () => {
+                cueEl.style.fontSize = (3.4 * SIZES[sizeIx][0]).toFixed(2) + 'vh';
+                cueEl.style.background = subBg ? 'rgba(0,0,0,.75)' : 'transparent';
+                cueEl.style.textShadow = subOutline
+                    ? '0 0 5px #000, 0 0 5px #000, 1px 1px 2px #000, -1px -1px 2px #000' : 'none';
+                cueEl.style.bottom = ({ 0: '9vh', 1: '16vh', 2: '24vh' })[subPos] || '9vh';
+            };
+            styleCue();
+            const parseVtt = (txt) => {
+                const cues = [];
+                const re = /(\d{2,}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{2,}):(\d{2}):(\d{2})[.,](\d{3})/;
+                for (const b of txt.replace(/\r/g, '').split(/\n\n+/)) {
+                    const lines = b.split('\n');
+                    const ti = lines.findIndex(l => l.includes('-->'));
+                    if (ti < 0) continue;
+                    const m = lines[ti].match(re);
+                    if (!m) continue;
+                    const s = +m[1] * 3600 + +m[2] * 60 + +m[3] + +m[4] / 1000;
+                    const e = +m[5] * 3600 + +m[6] * 60 + +m[7] + +m[8] / 1000;
+                    const text = lines.slice(ti + 1).join('\n').replace(/<[^>]+>/g, '').trim();
+                    if (text && e > s) cues.push({ s, e, text });
+                }
+                return cues;
+            };
+            let subList = [], curSub = null;
+            const paintCue = () => {
+                if (!state) return;
+                const t = cur();
+                const c = state.cues.length ? state.cues.find(x => t >= x.s && t <= x.e) : null;
+                const want = c ? c.text : '';
+                if (cueEl.dataset.t !== want) { cueEl.dataset.t = want; cueEl.textContent = want; }
+                cueEl.style.display = want ? 'block' : 'none';
             };
             const selectSub = async (s) => {
-                curSub = s; subVtt = '';
+                curSub = s;
+                if (state) state.cues = [];
+                paintCue();
                 player.querySelector('.wp-subs').classList.toggle('on', !!s);
-                if (s) { try { subVtt = await (await fetch(`${SVC}/websub?u=${b64u(s.url)}`)).text(); } catch {} }
-                applySub();
+                if (!s) return;
+                try {
+                    const txt = await (await fetch(`${SVC}/websub?u=${b64u(s.url)}`)).text();
+                    if (!state || curSub !== s) return;
+                    state.cues = parseVtt(txt);
+                    state.lastCue = state.cues.reduce((m, c) => Math.max(m, c.e), 0);
+                } catch {}
             };
             const menu = player.querySelector('.wp-menu');
             const openMenu = (items) => {
@@ -127,6 +174,7 @@
                     .then(r => r.json()).then(d => {
                         const seen = new Set();
                         subList = (d.subtitles || []).filter(s => s.url && !seen.has(s.lang) && seen.add(s.lang));
+                        if (subLang === 'off') return;   // Subtitles language: Off — user picks manually
                         const pref = subList.find(s => (s.lang || '').toLowerCase().startsWith(subLang))
                             || subList.find(s => /^en/i.test(s.lang || ''));
                         if (pref) selectSub(pref);
@@ -136,9 +184,9 @@
                 ? openMenu([['Subtitles off', () => selectSub(null), !curSub],
                     ...subList.slice(0, 14).map(s => [s.lang || '?', () => selectSub(s), curSub === s])])
                 : menu.classList.add('hidden');
-            player.querySelector('.wp-size').onclick = () => {
-                sizeIx = (sizeIx + 1) % SIZES.length; setCue();
-                const c = player.querySelector('.wp-size'); c.textContent = SIZES[sizeIx][1];
+            player.querySelector('.wp-subsize').onclick = () => {
+                sizeIx = (sizeIx + 1) % SIZES.length; styleCue();
+                const c = player.querySelector('.wp-subsize'); c.textContent = SIZES[sizeIx][1];
                 setTimeout(() => { c.textContent = 'Aa'; }, 1200);
             };
             const FITS = [['contain', 'Fit'], ['cover', 'Fill'], ['fill', 'Stretch']];
@@ -148,6 +196,27 @@
                 v.style.objectFit = FITS[fitIx][0];
                 const c = player.querySelector('.wp-scale'); c.textContent = FITS[fitIx][1];
                 setTimeout(() => { c.textContent = '⤢'; }, 1200);
+            };
+            // Speed: same cycle idea as the TV player's Speed button
+            const SPEEDS = [1, 1.25, 1.5, 2, 0.75];
+            let spIx = 0;
+            player.querySelector('.wp-speed').onclick = () => {
+                spIx = (spIx + 1) % SPEEDS.length;
+                state.speed = SPEEDS[spIx];
+                v.playbackRate = state.speed;
+                player.querySelector('.wp-speed').textContent = SPEEDS[spIx] + '×';
+            };
+            // Info: what the stream actually is (web's version of the TV player's stats)
+            const infoBox = player.querySelector('.wp-infobox');
+            player.querySelector('.wp-info').onclick = () => {
+                if (!infoBox.classList.contains('hidden')) { infoBox.classList.add('hidden'); return; }
+                infoBox.textContent = [
+                    v.videoWidth ? `${v.videoWidth}×${v.videoHeight}` : 'resolution unknown',
+                    state.dur ? `length ${fmt(state.dur)}` : '',
+                    `speed ${state.speed}×`,
+                    `position ${fmt(cur())}`,
+                ].filter(Boolean).join('\n');
+                infoBox.classList.remove('hidden');
             };
 
             // real duration for the timeline (fMP4 stream itself reports none)
@@ -167,11 +236,61 @@
             const seekTo = (t) => {
                 if (!state) return;
                 t = Math.max(0, state.dur ? Math.min(t, state.dur - 5) : t);
-                state.offset = t; v.src = src(t); v.play().catch(() => {});
-                applySub();   // cue times are offset-shifted — regenerate for the new start point
+                state.offset = t; v.src = src(t);
+                v.playbackRate = state.speed;
+                v.play().catch(() => {});
+                paintCue();
             };
-            v.addEventListener('timeupdate', () => { paint(); posCb && posCb({ pos: cur(), dur: state?.dur || 0 }); });
-            v.addEventListener('ended', () => closePlayer(true));
+
+            // ---- Skip intro + UP NEXT card + clock ("Ends h:mm"), 1-second ticker ----
+            const skipBtn = player.querySelector('.wp-skip');
+            const nextCard = player.querySelector('.wp-next');
+            player.querySelector('.wpn-title').textContent = nextLabel || '';
+            skipBtn.onclick = () => { state.introHandled = true; skipBtn.classList.add('hidden'); seekTo(introToMs / 1000); };
+            const fireNext = () => {
+                if (!state || !state.dur) { closePlayer(true, { next: true }); return; }
+                const remMs = Math.max(0, Math.round((state.dur - cur()) * 1000));
+                closePlayer(true, { next: true, credits: remMs });
+            };
+            if (hasNext) {
+                player.querySelector('.wp-nextbtn').onclick = fireNext;
+                player.querySelector('.wpn-play').onclick = fireNext;
+                player.querySelector('.wpn-dismiss').onclick = () => nextCard.classList.add('hidden');
+            }
+            state.tick = setInterval(() => {
+                if (!state) return;
+                player.querySelector('.wp-clock').textContent = clock(new Date());
+                if (state.dur > 0) {
+                    const remaining = (state.dur - cur()) / (state.speed || 1);
+                    player.querySelector('.wp-ends').textContent =
+                        'Ends ' + clock(new Date(Date.now() + remaining * 1000));
+                    // credits lead, best signal first (same rule as the TV player): the
+                    // episode's own last subtitle cue → family's learned credits clicks → 90s
+                    const subsLead = state.lastCue > 0 ? state.dur - state.lastCue - 2 : -1;
+                    const lead = (subsLead >= 15 && subsLead <= 300) ? subsLead
+                        : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 90);
+                    const remReal = state.dur - cur();
+                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= lead) {
+                        state.nextShown = true;
+                        nextCard.classList.remove('hidden');
+                    }
+                    // learned skip-intro window (from /player/resume): button lives inside it
+                    if (!state.introHandled && introFromMs >= 0 && introToMs > introFromMs) {
+                        const p = cur() * 1000;
+                        const inWin = p >= introFromMs && p <= introToMs - 2000;
+                        skipBtn.classList.toggle('hidden', !inWin);
+                        if (!inWin && p >= introToMs - 2000) state.introHandled = true;
+                    }
+                }
+                paintCue();
+            }, 1000);
+
+            v.addEventListener('timeupdate', () => { paint(); paintCue(); posCb && posCb({ pos: cur(), dur: state?.dur || 0 }); });
+            v.addEventListener('ended', () => {
+                // finished for real: autoplay-next rides the exit (app decides via watched
+                // rules); flag it so a finished episode advances even at odd durations
+                if (hasNext && autonext) fireNext(); else closePlayer(true);
+            });
             v.addEventListener('error', () => player?.querySelector('.wp-hint')?.classList.remove('hidden'));
             v.addEventListener('play', () => { player.querySelector('.wp-pp').textContent = '⏸'; });
             v.addEventListener('pause', () => { player.querySelector('.wp-pp').textContent = '▶'; });

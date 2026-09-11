@@ -69,8 +69,10 @@ select:focus, select:hover { border-color:var(--accent); }
 .poster img { width:146px; height:219px; object-fit:cover; border-radius:10px; background:var(--card); display:block;
               box-shadow:0 3px 14px #0006; }
 .poster:hover img { outline:2px solid var(--accent); box-shadow:0 6px 22px #0009; }
+/* single line, centered, ELLIPSIZED — a long title can never push the next tile or wrap
+   the grid (AJ Sep 11); width locked to the poster no matter the container */
 .poster .pt { font-size:.8rem; color:#d8d5ea; font-weight:600; margin-top:.3rem; text-align:center;
-              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:146px; max-width:146px; }
 .poster .bar { position:absolute; left:9px; right:9px; bottom:9px; height:4px; background:#00000059; border-radius:2px; }
 .poster .bar > div { height:100%; background:#fff; border-radius:2px; min-width:6px; }
 .poster .ep-chip { position:absolute; bottom:18px; left:9px; background:#0C0B14D9; color:#fff; font-size:.72rem;
@@ -80,6 +82,10 @@ select:focus, select:hover { border-color:var(--accent); }
                       display:flex; align-items:center; justify-content:center; box-shadow:0 1px 6px #0008; }
 .poster .badge-done { position:absolute; top:.4rem; left:.4rem; width:24px; height:24px; border-radius:50%;
                       background:#f5c518; font-size:.72rem; display:flex; align-items:center; justify-content:center; }
+/* "+N": new episodes aired since they last watched this show (synced newEpsSeen) */
+.poster .badge-new { position:absolute; top:.4rem; left:.4rem; background:var(--accent); color:#fff;
+                     font-size:.72rem; font-weight:900; padding:.14rem .45rem; border-radius:99px;
+                     box-shadow:0 1px 6px #0008; }
 .poster .cw-x { position:absolute; top:.4rem; right:.4rem; width:26px; height:26px; border-radius:50%;
                 background:#0C0B14D9; color:#fff; font-size:.8rem; display:none; align-items:center; justify-content:center; }
 .poster:hover .cw-x { display:flex; }
@@ -89,14 +95,20 @@ select:focus, select:hover { border-color:var(--accent); }
 .pickers { display:flex; gap:.7rem; align-items:center; margin:.3rem 0 .6rem; flex-wrap:wrap; }
 .pickers label { color:var(--muted); font-size:.85rem; font-weight:700; margin-right:-.25rem; }
 
-/* ---- detail page: backdrop banner + poster + actions ---- */
+/* ---- detail + episode pages: backdrop banner + poster + actions ---- */
 .detail-page { position:relative; }
-#detail-backdrop { position:absolute; top:0; left:0; right:0; height:380px; background-size:cover;
+#detail-backdrop, #episode-backdrop { position:absolute; top:0; left:0; right:0; height:380px; background-size:cover;
                    background-position:center 25%; opacity:.35;
                    -webkit-mask-image:linear-gradient(180deg,#000 40%,transparent 100%);
                    mask-image:linear-gradient(180deg,#000 40%,transparent 100%); pointer-events:none; }
-.detail-page > button#back { position:relative; z-index:2; }
-#detail-body { position:relative; z-index:1; }
+.detail-page > button#back, .detail-page > button#ep-back { position:relative; z-index:2; }
+#detail-body, #episode-body { position:relative; z-index:1; }
+/* episode page (Stremio-style): logo, facts line, resume %, description, streams */
+#episode-body { padding-top:.8rem; max-width:900px; }
+#episode-body .ep-logo { max-height:72px; max-width:380px; object-fit:contain; display:block; margin-bottom:.4rem; }
+#episode-body .ep-facts { color:var(--muted); font-weight:700; font-size:.92rem; margin:.3rem 0; }
+#episode-body .ep-resume { color:var(--accent); font-weight:700; font-size:.9rem; margin:.2rem 0; }
+#episode-body #ep-streams .stream { max-width:760px; }
 .d-head { display:flex; gap:1.5rem; margin:1rem 0; }
 .d-head img.d-poster { width:210px; height:315px; object-fit:cover; border-radius:14px; box-shadow:0 8px 30px #000A; }
 .d-head h2 { font-size:2rem; margin-bottom:.4rem; text-shadow:0 2px 10px #0008; }
@@ -126,11 +138,60 @@ select:focus, select:hover { border-color:var(--accent); }
 .stream:hover { background:var(--card2); }
 .stream b { color:var(--accent); margin-right:.6rem; }
 
-/* settings */
-.set-card { background:var(--card); border-radius:12px; padding:.9rem 1.1rem; margin:.6rem 0; display:flex;
-            justify-content:space-between; align-items:center; gap:1rem; max-width:560px; }
-#view-settings h2 { margin-bottom:.6rem; }
-#view-settings > .page-pad > button#signout { margin-top:1rem; }
+/* ---- settings: EXACT app layout — user card, tappable rows, section headers ---- */
+#view-settings h2 { margin:.4rem 0 .6rem; }
+.user-card { background:var(--card); border-radius:14px; padding:.9rem 1rem; margin:.6rem 0; display:flex;
+             align-items:center; gap:.9rem; max-width:560px; }
+.uc-avatar { width:52px; height:52px; border-radius:50%; background:var(--accent); color:#fff; font-weight:800;
+             font-size:1.35rem; display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+.uc-email { font-weight:800; font-size:1.05rem; }
+.uc-sub { font-size:.85rem; }
+.ssection { color:var(--muted); font-size:.78rem; font-weight:800; letter-spacing:.08em; margin:1.1rem 0 .3rem; }
+.srow { background:var(--card); border-radius:12px; padding:.85rem 1rem; margin:.45rem 0; display:flex;
+        align-items:center; gap:.8rem; max-width:560px; cursor:pointer; }
+.srow:hover { background:var(--card2); }
+.srow.static { cursor:default; }
+.srow.static:hover { background:var(--card); }
+.srow-label { font-weight:700; flex:1; }
+.srow-value { color:var(--muted); font-size:.9rem; font-weight:700; }
+.srow-chev { color:var(--muted); font-weight:900; }
+.srow.static .srow-chev { visibility:hidden; }
+.sub-sample { background:#000; border-radius:10px; height:110px; max-width:560px; display:flex;
+              align-items:flex-end; justify-content:center; margin:.4rem 0 .6rem; color:#fff; }
+/* pill chips: library filters + shelf picker (flip in place, no rebuild) */
+.chip { background:#2C2649; color:var(--muted); font-weight:700; border-radius:16px; padding:.5rem 1rem;
+        margin:0 .5rem .5rem 0; font-size:.9rem; }
+.chip.on { background:var(--accent); color:#fff; }
+.chip.sort { color:#fff; }
+.chip-grid { display:flex; flex-wrap:wrap; max-width:720px; }
+.chip.shelf { flex:0 1 calc(50% - .6rem); text-align:center; white-space:nowrap; overflow:hidden;
+              text-overflow:ellipsis; background:#241F3D; }
+.chip.shelf.on { background:var(--accent); }
+.lib-controls { display:flex; flex-wrap:wrap; align-items:center; margin:.7rem 0 .2rem; }
+
+/* ---- Top 10 shelf: giant ghost rank numeral tucked behind each poster ---- */
+.strip.top10 { overflow:visible; overflow-x:auto; padding-top:.5rem; }
+.top10-cell { position:relative; flex:0 0 auto; display:flex; align-items:flex-end; padding-left:52px; }
+.top10-cell.wide { padding-left:88px; }
+.top10-num { position:absolute; left:0; bottom:16px; font-size:118px; line-height:.78; font-weight:900;
+             letter-spacing:-.08em; color:#FFFFFF26; text-shadow:0 0 2px #FFFFFFB3; pointer-events:none;
+             font-family:-apple-system,'Segoe UI',Roboto,sans-serif; z-index:0; }
+.top10-cell .poster { position:relative; z-index:1; }
+
+/* ---- people (search + person page) ---- */
+.person-card { flex:0 0 110px; cursor:pointer; text-align:center; }
+.person-card .person-photo { width:96px; height:96px; border-radius:50%; overflow:hidden; background:var(--card);
+                             margin:0 auto .35rem; display:flex; align-items:center; justify-content:center; font-size:2rem; }
+.person-card .person-photo img { width:100%; height:100%; object-fit:cover; }
+.person-card .pt { width:110px; max-width:110px; }
+.person-card .person-role { color:var(--muted); font-size:.72rem; font-weight:700; }
+.person-card:hover .person-photo { outline:2px solid var(--accent); }
+.person-head { display:flex; align-items:center; gap:1.1rem; margin:1rem 0; }
+.person-head img { width:88px; height:88px; border-radius:50%; object-fit:cover; }
+
+/* toast */
+#toast { position:fixed; bottom:26px; left:50%; transform:translateX(-50%); background:#241F3DF2; color:#fff;
+         font-weight:700; padding:.6rem 1.2rem; border-radius:99px; z-index:200; box-shadow:0 4px 18px #000A; }
 
 /* now playing (desktop/mpv) */
 #playing { position:fixed; bottom:0; left:0; right:0; background:var(--card2); padding:.7rem 1.4rem;
@@ -145,7 +206,33 @@ select:focus, select:hover { border-color:var(--accent); }
 #web-player .wp-ui > * { pointer-events:auto; }
 #web-player .wp-top { display:flex; align-items:center; gap:1rem; padding:1rem 1.2rem;
                       background:linear-gradient(180deg,#000C, transparent); }
-#web-player .wp-title { color:#fff; font-weight:800; font-size:1.05rem; text-shadow:0 1px 6px #000; }
+#web-player .wp-title { color:#fff; font-weight:800; font-size:1.05rem; text-shadow:0 1px 6px #000;
+                        flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* clock + "Ends h:mm" — same top-right cluster as the TV player */
+#web-player .wp-right { display:flex; flex-direction:column; align-items:flex-end; gap:.1rem; }
+#web-player .wp-clock { color:#fff; font-weight:800; font-size:1rem; text-shadow:0 1px 6px #000; }
+#web-player .wp-ends { color:#d8d5ea; font-weight:700; font-size:.8rem; text-shadow:0 1px 6px #000; }
+/* custom subtitle block: CENTERED, readable width — never native full-screen-wide cues */
+#web-player .wp-cue { position:absolute; left:50%; transform:translateX(-50%); bottom:9vh; max-width:68%;
+                      color:#fff; font-weight:600; text-align:center; line-height:1.35; white-space:pre-line;
+                      padding:.15em .45em; border-radius:6px; z-index:5; pointer-events:none; display:none; }
+/* Skip intro — pill inside the learned window, bottom-left like the TV player */
+#web-player .wp-skip { position:absolute; left:2rem; bottom:170px; background:#241F3DE6; color:#fff;
+                       border:1px solid #FFFFFF3A; font-weight:800; padding:.7rem 1.3rem; border-radius:99px;
+                       font-size:1rem; box-shadow:0 3px 14px #000A; }
+#web-player .wp-skip:hover { background:var(--accent); }
+/* UP NEXT card — slides in at credits time, never interrupts */
+#web-player .wp-next { position:absolute; right:2rem; bottom:170px; background:#16132AF0; border:1px solid #37315C;
+                       border-radius:14px; padding:1rem 1.2rem; max-width:340px; box-shadow:0 6px 26px #000C; }
+#web-player .wp-next .wpn-tag { color:var(--muted); font-size:.72rem; font-weight:900; letter-spacing:.1em; }
+#web-player .wp-next .wpn-title { color:#fff; font-weight:800; margin:.3rem 0 .7rem; }
+#web-player .wp-next .wpn-btns { display:flex; gap:.5rem; }
+#web-player .wp-next .wpn-play { background:var(--accent); color:#fff; font-weight:800; padding:.55rem 1rem; border-radius:10px; }
+#web-player .wp-next .wpn-dismiss { background:#241F3D; color:#fff; font-weight:700; padding:.55rem 1rem; border-radius:10px; }
+/* Info panel */
+#web-player .wp-infobox { position:absolute; top:76px; right:1.2rem; background:#16132ADD; border:1px solid #37315C;
+                          border-radius:12px; padding:.8rem 1rem; color:#d8d5ea; font-size:.85rem; font-weight:700;
+                          white-space:pre-line; }
 #web-player .wp-bottom { padding:0 1.4rem 1rem; background:linear-gradient(0deg,#000D, transparent); }
 #web-player .wp-bar { position:relative; height:6px; background:#FFFFFF3A; border-radius:99px; cursor:pointer; margin-bottom:.4rem; }
 #web-player .wp-fill { height:100%; background:var(--accent); border-radius:99px; }
