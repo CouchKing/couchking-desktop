@@ -117,14 +117,23 @@ function show(which) {
 
 // ---------- posters / rows ----------
 const IMG = (p, w = 342) => p ? (p.startsWith('http') ? p : `https://image.tmdb.org/t/p/w${w}${p}`) : '';
+// tile = EXACT Firestick card: white bar on a dark track flush at the poster's bottom
+// (only 2–97%), purple ✓ top-right = My List, yellow eye top-left = watched, single-line
+// centered title below
 function posterEl(t, opts = {}) {
     const d = document.createElement('div'); d.className = 'poster';
-    const showTitle = PREF('titles', true);
-    d.innerHTML = `<img loading="lazy" src="${t.poster || ''}">`
+    const st = pstate();
+    const hasBar = opts.pct >= 2 && opts.pct <= 97;
+    const inList = (st.watchlist || []).some(x => x.id === t.id);
+    const isDone = (st.watchedIds || []).includes(t.id);
+    d.innerHTML = `<div class="pwrap"><img loading="lazy" src="${t.poster || ''}">`
         + (opts.chip ? `<div class="ep-chip">${opts.chip}</div>` : '')
         + (opts.removable ? `<div class="cw-x" title="Remove from Continue Watching">✕</div>` : '')
-        + (showTitle ? `<div class="pt">${t.name || ''}</div>` : '')
-        + (opts.pct > 0 ? `<div class="bar"><div style="width:${opts.pct}%"></div></div>` : '');
+        + (inList ? '<div class="badge-list">✓</div>' : '')
+        + (isDone && !opts.removable ? '<div class="badge-done">👁</div>' : '')
+        + (hasBar ? `<div class="bar"><div style="width:${opts.pct}%"></div></div>` : '')
+        + `</div>`
+        + (PREF('titles', true) ? `<div class="pt">${t.name || ''}</div>` : '');
     d.onclick = (e) => { if (!e.target.classList.contains('cw-x')) detail(t); };
     if (opts.removable) d.querySelector('.cw-x').onclick = () => removeContinue(t, d);
     return d;
@@ -212,15 +221,14 @@ async function forYouRow(kind) {
 }
 
 // ---------- home ----------
+// SAME rule as the Firestick's cwProgress: the bar shows ONLY the episode you're on
+// (cwlast) — never the max across the whole show (a finished S1E1 made a 2-min-into-S2E4
+// card read "fully watched", AJ Sep 10)
 function pctOf(st, t) {
-    let best = 0;
-    for (const [k, v] of Object.entries(st.positions || {})) {
-        if (k === t.id || k.startsWith(t.id + ':')) {
-            const [p, d] = String(v).split('|').map(Number);
-            if (d > 0) best = Math.max(best, Math.round(100 * p / d));
-        }
-    }
-    return best;
+    const key = t.type === 'series' ? (st.cwlast || {})[t.id] : t.id;
+    if (!key) return 0;
+    const [p, d] = String((st.positions || {})[key] || '').split('|').map(Number);
+    return d > 0 ? Math.min(100, Math.round(100 * p / d)) : 0;
 }
 function cwChip(st, t) {
     if (t.type !== 'series') return '';
@@ -262,19 +270,30 @@ async function hero(st) {
     };
 }
 async function home() {
-    document.querySelector('#view-home .rows').innerHTML = '';
+    const rows = document.querySelector('#view-home .rows');
+    rows.innerHTML = '';
     const st = pstate();
     hero(st);
     addRow('Continue Watching', (st.continue || []).map(t => ({ ...t })),
         (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest }));
+    // rows land IN CATALOG ORDER via pre-placed slots (async fills used to append in
+    // completion order — the board shuffled on every load and looked nothing like the TV)
+    const slot = () => { const s = document.createElement('div'); rows.appendChild(s); return s; };
+    const fill = (holder, label, items) => {
+        if (!items?.length) { holder.remove(); return; }
+        addRow(label, items, null, holder);
+    };
     if (!S.guest) {
-        forYouRow('movie').then(x => addRow('For You — Movies', x));
-        forYouRow('tv').then(x => addRow('For You — Series', x));
+        const fm = slot(), fs = slot();
+        forYouRow('movie').then(x => fill(fm, 'For You — Movies', x));
+        forYouRow('tv').then(x => fill(fs, 'For You — Series', x));
     }
     // the profile's shelf line-up SYNCS from the account (same picks as the Firestick)
     const enabled = (st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES;
-    for (const r of CK_CAT.SHELF_CATALOG.filter(x => enabled.includes(x.label)))
-        rowItems(r).then(items => addRow(r.label, items));
+    for (const r of CK_CAT.SHELF_CATALOG.filter(x => enabled.includes(x.label))) {
+        const s = slot();
+        rowItems(r).then(items => fill(s, r.label, items));
+    }
 }
 
 // ---------- search ----------
@@ -352,11 +371,11 @@ async function whereToWatch(imdb, type) {
     for (const [kind, label] of [['flatrate', 'Stream'], ['free', 'Free'], ['rent', 'Rent'], ['buy', 'Buy']]) {
         const list = us[kind];
         if (!list?.length) continue;
+        // every chip LINKS OUT to the watch page (AJ: "buy rent and watch should all be links")
         html += `<div class="wtw-kind">${label}</div>` + list.slice(0, 8).map(p =>
-            `<span class="prov"><img src="https://image.tmdb.org/t/p/w92${p.logo_path}">${p.provider_name}</span>`).join('');
+            `<a class="prov" href="#" data-ext="${us.link || 'https://www.themoviedb.org'}"><img src="https://image.tmdb.org/t/p/w92${p.logo_path}">${p.provider_name} ↗</a>`).join('');
     }
     holder.innerHTML = html ? `<div class="wtw-kind" style="margin-top:0">Where to watch</div>` + html : '';
-    if (html && us.link) holder.innerHTML += `<div style="margin-top:.4rem"><a href="#" data-ext="${us.link}">All options ↗</a></div>`;
 }
 function seasons(meta) {
     const eps = (meta.videos || []).filter(v => v.season > 0);
@@ -454,7 +473,7 @@ async function play(url, label, sid) {
         $('playing-title').textContent = label;
         $('playing').classList.remove('hidden');
     }
-    await ck.play({ url, title: label, startSec,
+    await ck.play({ url, title: label, startSec, sid,
         subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), audioLang: PREF('audlang', 'en'),
         subBg: PREF('subbg', false), subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0),
         seekStep: PREF('seek', 10) });
