@@ -1253,21 +1253,10 @@ function playerSettings() {
             const next = sizes[(sizes.indexOf(curSize) + 1) % sizes.length];
             SETPREF('subscale', next[1]); rebuild();
         }));
-        body.appendChild(settingRow('Subtitles language', PREF('sublang', 'en') === 'off' ? 'Off' : 'English', () => {
+        // AJ Sep 11: English or Off, nothing else — bg/outline/position/audio ride good
+        // defaults (outline on, no box, normal pos, English audio server-gated).
+        body.appendChild(settingRow('Subtitles', PREF('sublang', 'en') === 'off' ? 'Off' : 'English', () => {
             SETPREF('sublang', PREF('sublang', 'en') === 'en' ? 'off' : 'en'); rebuild();
-        }));
-        body.appendChild(settingRow('Subtitle background', PREF('subbg', false) ? 'Black box' : 'None', () => {
-            SETPREF('subbg', !PREF('subbg', false)); rebuild();
-        }));
-        body.appendChild(settingRow('Subtitle outline', PREF('suboutline', true) ? 'On' : 'Off', () => {
-            SETPREF('suboutline', !PREF('suboutline', true)); rebuild();
-        }));
-        body.appendChild(settingRow('Subtitle position', ['Normal', 'Raised', 'High'][PREF('subpos', 0)] || 'Normal', () => {
-            SETPREF('subpos', (PREF('subpos', 0) + 1) % 3); rebuild();
-        }));
-        body.appendChild(sectionText('AUDIO'));
-        body.appendChild(settingRow('Preferred audio', PREF('audlang', 'en') === 'orig' ? 'Original' : 'English', () => {
-            SETPREF('audlang', PREF('audlang', 'en') === 'en' ? 'orig' : 'en'); rebuild();
         }));
         body.appendChild(sectionText('PLAYBACK'));
         body.appendChild(settingRow('Autoplay next episode', PREF('autonext', true) ? 'On' : 'Off', () => {
