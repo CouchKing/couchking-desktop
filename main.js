@@ -75,7 +75,8 @@ function stopMpv() {
 
 // Launch mpv fullscreen for a stream; report position over IPC so the renderer can
 // beacon /player/progress (cross-device resume) exactly like the TV app does on exit.
-ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0 }) => {
+ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, subLang = 'en',
+        audioLang = 'en', subBg = false, subOutline = true, subPos = 0 }) => {
     stopMpv();
     lastPos = 0; lastDur = 0;
     mpvIpcPath = process.platform === 'win32'
@@ -88,7 +89,11 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0 }) 
         '--input-ipc-server=' + mpvIpcPath,
         '--user-agent=CouchKingDesktop/0.1',
         '--hwdec=auto-safe', '--cache=yes', '--demuxer-max-bytes=256MiB',
-        '--slang=en,eng', '--alang=en,eng', '--sub-scale=' + (subScale || 1.0),
+        '--slang=' + subLang + ',en,eng', '--alang=' + audioLang + ',en,eng',
+        '--sub-scale=' + (subScale || 1.0),
+        '--sub-pos=' + (subPos === 2 ? 75 : subPos === 1 ? 90 : 100),
+        '--sub-border-size=' + (subOutline ? 3 : 0),
+        ...(subBg ? ['--sub-back-color=#B3000000'] : []),
         '--osc=yes', '--osd-bar=yes'
     ];
     if (startSec > 5) args.push('--start=' + Math.floor(startSec));

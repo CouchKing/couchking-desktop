@@ -128,14 +128,50 @@ select:focus, select:hover { border-color:var(--accent); }
 #playing { position:fixed; bottom:0; left:0; right:0; background:var(--card2); padding:.7rem 1.4rem;
            display:flex; align-items:center; gap:1rem; border-top:1px solid #37315C; z-index:30; }
 
-/* ---- web player overlay (browser version) ---- */
-#web-player { position:fixed; inset:0; background:#000; z-index:100; display:flex; flex-direction:column; }
-#web-player .wp-top { display:flex; justify-content:space-between; align-items:center; padding:.7rem 1.1rem;
-                      color:#fff; font-weight:800; background:#0C0B14; }
-#web-player .wp-close { background:#241F3D; padding:.45rem .9rem; border-radius:8px; }
-#web-player video { flex:1; width:100%; min-height:0; background:#000; }
-#web-player .wp-hint { text-align:center; color:var(--muted); font-size:.85rem; padding:.5rem; background:#0C0B14; }
-#web-player .wp-hint.err { color:#ff9a7a; }
+/* ---- web player overlay: custom controls styled like the TV player ---- */
+#web-player { position:fixed; inset:0; background:#000; z-index:100; }
+#web-player video { position:absolute; inset:0; width:100%; height:100%; background:#000; }
+#web-player .wp-ui { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:space-between;
+                     transition:opacity .25s ease; pointer-events:none; }
+#web-player .wp-ui.idle { opacity:0; }
+#web-player .wp-ui > * { pointer-events:auto; }
+#web-player .wp-top { display:flex; align-items:center; gap:1rem; padding:1rem 1.2rem;
+                      background:linear-gradient(180deg,#000C, transparent); }
+#web-player .wp-title { color:#fff; font-weight:800; font-size:1.05rem; text-shadow:0 1px 6px #000; }
+#web-player .wp-bottom { padding:0 1.4rem 1rem; background:linear-gradient(0deg,#000D, transparent); }
+#web-player .wp-bar { position:relative; height:6px; background:#FFFFFF3A; border-radius:99px; cursor:pointer; margin-bottom:.4rem; }
+#web-player .wp-fill { height:100%; background:var(--accent); border-radius:99px; }
+#web-player .wp-dot { position:absolute; top:50%; width:14px; height:14px; background:#fff; border-radius:50%;
+                      transform:translate(-50%,-50%); box-shadow:0 0 6px #000A; }
+#web-player .wp-times { display:flex; justify-content:space-between; color:#d8d5ea; font-size:.85rem; font-weight:700; margin-bottom:.5rem; }
+#web-player .wp-controls { display:flex; gap:1.6rem; justify-content:center; align-items:flex-end; }
+/* label ABOVE each button — same layout as the TV player bar */
+#web-player .wp-cell { display:flex; flex-direction:column; align-items:center; gap:.3rem; }
+#web-player .wp-cell > span { color:var(--muted); font-size:.72rem; font-weight:700; }
+#web-player .wp-btn { background:#241F3DCC; color:#fff; font-size:1.25rem; padding:.55rem 1rem; border-radius:12px; }
+#web-player .wp-btn:hover { background:var(--accent); }
+#web-player .wp-vol { width:110px; accent-color:var(--accent); }
+#web-player .wp-hint { position:absolute; left:0; right:0; bottom:88px; text-align:center; color:#ff9a7a;
+                       font-size:.9rem; text-shadow:0 1px 4px #000; }
+
+/* where-to-watch providers (guest / no-service accounts — neutral tracker shell) */
+.wtw { margin-top:1.1rem; }
+.wtw .prov { display:inline-flex; align-items:center; gap:.5rem; background:var(--card); border-radius:10px;
+             padding:.5rem .8rem; margin:0 .5rem .5rem 0; font-weight:700; }
+.wtw .prov img { width:28px; height:28px; border-radius:6px; }
+.wtw .wtw-kind { color:var(--muted); font-size:.85rem; font-weight:800; margin:.6rem 0 .3rem; text-transform:uppercase; letter-spacing:.05em; }
+
+/* episode watched-toggle (eye) */
+.ep .ep-eye { margin-left:auto; background:#241F3D; border-radius:10px; padding:.5rem .7rem; font-size:1rem; flex:0 0 auto; }
+.ep .ep-eye:hover { background:var(--accent); }
+
+/* profile manager */
+.prof-card { background:var(--card); border-radius:16px; padding:1.4rem; display:flex; flex-direction:column; gap:.8rem; min-width:340px; }
+.prof-row { display:flex; align-items:center; gap:.6rem; }
+.prof-row .pr-name { flex:1; text-align:left; }
+.avatar-pick { display:flex; gap:.4rem; flex-wrap:wrap; max-width:340px; }
+.avatar-pick button { font-size:1.3rem; background:var(--card2); padding:.4rem .6rem; }
+.avatar-pick button.on { background:var(--accent); }
 
 /* sign-in prompt overlay (guest tries to play / save) */
 #gate { position:fixed; inset:0; background:#000B; display:flex; align-items:center; justify-content:center; z-index:90; }

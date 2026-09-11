@@ -5,7 +5,10 @@ const TMDB = 'b05e998c589bf1393c1059bd1d4c5895';
 const CINE = 'https://v3-cinemeta.strem.io';
 let SERVICE = 'https://couchking.app';
 let S = { email: '', token: '', user: '', subKey: '', addons: [], state: {}, guest: false };
-const APPVER = () => (ck.platform === 'web' ? 'web' : 'desktop') + '-0.6';
+const APPVER = () => (ck.platform === 'web' ? 'web' : 'desktop') + '-0.7';
+// the app is a NEUTRAL TRACKER SHELL until an account with an assigned service signs in
+// (guests and key-less accounts browse + track + see where-to-watch; no stream buttons)
+const hasService = () => !S.guest && S.addons.length > 0;
 
 const $ = (id) => document.getElementById(id);
 const j = async (url, opts = {}) => {
@@ -71,15 +74,27 @@ async function bootstrap() {
     $('set-email').textContent = S.email;
     $('set-service').textContent = S.subKey ? 'Connected (' + S.subKey.slice(0, 8) + '…)' : 'None on this account';
     applyAccountPrefs();
+    lastSyncSig = syncSig();
     show('main'); home();
 }
 
 // live sync like the phone/Firestick: re-pull account state every 60s so what you watch
-// on other devices shows up here without a restart
+// on other devices shows up here without a restart. QUIET: only re-render when the data
+// actually changed AND you're parked at the top of Home — never yank the page around.
+let lastSyncSig = '';
+function syncSig() {
+    const p = pstate();
+    return JSON.stringify([p.continue, p.cwlast, p.positions, p.watchlist, p.watchedIds, p.prefs]);
+}
 setInterval(async () => {
-    if (S.guest || !S.token) return;
+    if (S.guest || !S.token || playing) return;
     const st = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`);
-    if (st) { S.state = st; applyAccountPrefs(); if (page === 'home' && !playing) home(); }
+    if (!st) return;
+    S.state = st; applyAccountPrefs();
+    const sig = syncSig();
+    if (sig === lastSyncSig) return;
+    lastSyncSig = sig;
+    if (page === 'home' && $('content').scrollTop < 60) home();
 }, 60000);
 
 // rail navigation: pages live side by side, rail icon marks the active one
@@ -227,15 +242,17 @@ async function hero(st) {
         if (t) { const f = await j(`https://api.themoviedb.org/3/tv/${t.tmdb}/external_ids?api_key=${TMDB}`); if (f?.imdb_id) t.id = f.imdb_id; }
     }
     if (!t || !bg) return;
+    // no service on the account → tracker shell: More info only, no play button
     h.innerHTML = `<div class="hero-bg" style="background-image:url('${bg}')"></div><div class="hero-fade"></div>
         <div class="hero-body"><h2>${t.name || ''}</h2><div class="hero-sub">${sub}</div>
-        <div class="hero-btns"><button class="primary">▶ ${st.continue?.length ? 'Resume' : 'Watch'}</button>
+        <div class="hero-btns">${hasService() ? `<button class="primary">▶ ${st.continue?.length ? 'Resume' : 'Watch'}</button>` : ''}
         <button class="ghost">More info</button></div></div>`;
     h.classList.remove('hidden');
-    const [play, info] = h.querySelectorAll('button');
+    const btns = h.querySelectorAll('button');
+    const info = btns[btns.length - 1];
     info.onclick = (e) => { e.stopPropagation(); detail(t); };
     h.onclick = () => detail(t);
-    play.onclick = async (e) => {
+    if (hasService()) btns[0].onclick = async (e) => {
         e.stopPropagation();
         const last = (pstate().cwlast || {})[t.id];
         if (t.type === 'series' && last?.includes(':')) {
@@ -302,10 +319,11 @@ async function detail(t) {
         <div class="d-meta">${meta.year || ''}${meta.runtime ? ' · ' + meta.runtime : ''} · ⭐ ${meta.imdbRating || '—'}${(meta.genres || []).length ? ' · ' + meta.genres.slice(0, 3).join(', ') : ''}</div>
         <div class="d-desc">${meta.description || ''}</div>
         <div class="d-btns">
-          ${t.type === 'movie' ? `<button class="primary" id="d-play">▶ ${moviePct > 0 && moviePct < 92 ? `Resume · ${moviePct}%` : 'Play'}</button>` : ''}
+          ${t.type === 'movie' && hasService() ? `<button class="primary" id="d-play">▶ ${moviePct > 0 && moviePct < 92 ? `Resume · ${moviePct}%` : 'Play'}</button>` : ''}
           <button class="ghost" id="d-list"></button>
           <button class="ghost" id="d-watched"></button>
         </div>
+        <div id="d-wtw" class="wtw"></div>
         </div></div>
         <div id="d-eps"></div><div id="d-streams" class="streams"></div>`;
     const tt = { id: imdb, type: t.type, name: meta.name, poster: meta.poster || t.poster || '' };
@@ -317,8 +335,28 @@ async function detail(t) {
     $('d-list').onclick = () => { if (S.guest) return gate('My List syncs across your devices with a free account.'); toggleList(tt); paintBtns(); };
     $('d-watched').onclick = () => { if (S.guest) return gate('Watch history syncs across your devices with a free account.'); toggleWatchedTitle(tt); paintBtns(); };
     paintBtns();
-    if (t.type === 'movie') $('d-play').onclick = () => pickStream(imdb, meta.name);
+    if (!hasService()) whereToWatch(imdb, t.type);   // tracker shell: providers, not streams
+    if (t.type === 'movie') { if (hasService()) $('d-play').onclick = () => pickStream(imdb, meta.name); }
     else seasons(meta);
+}
+// where-to-watch (guest / no-service accounts): TMDB providers, same idea as the TV app
+async function whereToWatch(imdb, type) {
+    const f = await j(`https://api.themoviedb.org/3/find/${imdb}?api_key=${TMDB}&external_source=imdb_id`);
+    const id = f?.[type === 'series' ? 'tv_results' : 'movie_results']?.[0]?.id;
+    if (!id) return;
+    const d = await j(`https://api.themoviedb.org/3/${type === 'series' ? 'tv' : 'movie'}/${id}/watch/providers?api_key=${TMDB}`);
+    const us = d?.results?.US;
+    const holder = $('d-wtw'); if (!holder) return;
+    if (!us) { holder.innerHTML = '<div class="wtw-kind">Where to watch</div><span class="muted">No streaming info for this title.</span>'; return; }
+    let html = '';
+    for (const [kind, label] of [['flatrate', 'Stream'], ['free', 'Free'], ['rent', 'Rent'], ['buy', 'Buy']]) {
+        const list = us[kind];
+        if (!list?.length) continue;
+        html += `<div class="wtw-kind">${label}</div>` + list.slice(0, 8).map(p =>
+            `<span class="prov"><img src="https://image.tmdb.org/t/p/w92${p.logo_path}">${p.provider_name}</span>`).join('');
+    }
+    holder.innerHTML = html ? `<div class="wtw-kind" style="margin-top:0">Where to watch</div>` + html : '';
+    if (html && us.link) holder.innerHTML += `<div style="margin-top:.4rem"><a href="#" data-ext="${us.link}">All options ↗</a></div>`;
 }
 function seasons(meta) {
     const eps = (meta.videos || []).filter(v => v.season > 0);
@@ -351,8 +389,14 @@ function seasons(meta) {
                   ${pct > 0 ? `<div class="ebar"><div style="width:${pct}%"></div></div>` : ''}
                 </div>
                 <div class="et"><b>${e.episode}. ${e.name || ''}</b><span>${(e.released || '').slice(0, 10)}${aired ? '' : ' · not aired'}</span>
-                ${e.overview && !(doBlur && !seen) ? `<div class="ep-desc">${e.overview}</div>` : ''}</div>`;
-            el.onclick = () => aired && pickStream(key, `${meta.name} S${e.season}E${e.episode}`);
+                ${e.overview && !(doBlur && !seen) ? `<div class="ep-desc">${e.overview}</div>` : ''}</div>
+                <button class="ep-eye" title="${seen ? 'Watched — click to unmark' : 'Mark episode watched'}">${seen ? '✓' : '👁'}</button>`;
+            el.onclick = () => aired && hasService() && pickStream(key, `${meta.name} S${e.season}E${e.episode}`);
+            el.querySelector('.ep-eye').onclick = (ev) => {
+                ev.stopPropagation();
+                if (S.guest) return gate('Track watched episodes with a free account.');
+                toggleEpWatched(key); paint(sn);
+            };
             list.appendChild(el);
         }
     };
@@ -364,12 +408,20 @@ function seasons(meta) {
     paint(+sel.value);
 }
 
+// per-episode watched toggle (eye button — same as the phone/Firestick)
+function toggleEpWatched(key) {
+    const st = pstate(); st.watchedIds = st.watchedIds || [];
+    const i = st.watchedIds.indexOf(key);
+    if (i >= 0) { st.watchedIds.splice(i, 1); st.removedTs = stamp(st.removedTs, key); }
+    else { st.watchedIds.push(key); st.addedTs = stamp(st.addedTs, key); }
+    pushAccount();
+}
+
 // ---------- streams + play ----------
 async function pickStream(sid, label, autoFirst = false) {
-    if (S.guest) return gate('Streams come with a CouchKing account.');
+    if (!hasService()) return;   // tracker shell: no stream fetches without a service
     const holder = $('d-streams');
     holder.innerHTML = '<div class="muted">Finding streams…</div>';
-    if (!S.addons.length) { holder.innerHTML = '<div class="err">No service on this account.</div>'; return; }
     const base = S.addons[0].url.replace(/\/$/, '');
     const type = sid.includes(':') ? 'series' : 'movie';
     const d = await j(`${base}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
@@ -402,7 +454,10 @@ async function play(url, label, sid) {
         $('playing-title').textContent = label;
         $('playing').classList.remove('hidden');
     }
-    await ck.play({ url, title: label, startSec, subScale: PREF('subscale', 1.0) });
+    await ck.play({ url, title: label, startSec,
+        subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), audioLang: PREF('audlang', 'en'),
+        subBg: PREF('subbg', false), subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0),
+        seekStep: PREF('seek', 10) });
 }
 ck.onMpvPos(({ pos, dur }) => {
     if (!playing) return;
@@ -545,27 +600,84 @@ document.querySelectorAll('.rail-item.nav').forEach(n => n.onclick = () => nav(n
 
 // ---------- active profile ----------
 function pstate() { return S.state.states?.[S.pid] || S.state; }
-$('rail-profile').onclick = () => {
-    const profs = S.state.profiles || [];
-    if (profs.length < 2) return;
-    const ov = document.createElement('div');
+// full profile manager (switch / add / rename / avatar / delete) — same as the apps
+const AVATARS = ['👤', '😀', '😎', '👑', '🐱', '🐶', '🦊', '🐼', '👻', '🤖', '🦄', '🍿'];
+$('rail-profile').onclick = () => { if (!S.guest && S.token) profileManager(); };
+function switchProfile(p) {
+    S.pid = p.id; S.user = p.name; localStorage.setItem('ck-pid', p.id);
+    $('prof-name').textContent = p.name; $('prof-avatar').textContent = p.avatar || '👤';
+    applyAccountPrefs();
+    home(); if (page === 'library') library();
+}
+function profileManager() {
+    document.getElementById('prof-ov')?.remove();
+    const ov = document.createElement('div'); ov.id = 'prof-ov';
     ov.style.cssText = 'position:fixed;inset:0;background:#000A;display:flex;align-items:center;justify-content:center;z-index:50';
-    const card = document.createElement('div');
-    card.style.cssText = 'background:var(--card);border-radius:16px;padding:1.4rem;display:flex;gap:1rem';
-    for (const p of profs) {
-        const b = document.createElement('button'); b.className = p.id === S.pid ? 'primary' : 'ghost';
-        b.textContent = (p.avatar || '👤') + '  ' + p.name;
-        b.onclick = () => {
-            S.pid = p.id; S.user = p.name; localStorage.setItem('ck-pid', p.id);
-            $('prof-name').textContent = p.name; $('prof-avatar').textContent = p.avatar || '👤';
-            applyAccountPrefs();
-            ov.remove(); home(); if (page === 'library') library();
-        };
-        card.appendChild(b);
-    }
+    const card = document.createElement('div'); card.className = 'prof-card';
     ov.appendChild(card); ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
     document.body.appendChild(ov);
-};
+    const listView = () => {
+        const profs = S.state.profiles || [];
+        card.innerHTML = '<h3>Profiles</h3>';
+        for (const p of profs) {
+            const row = document.createElement('div'); row.className = 'prof-row';
+            const use = document.createElement('button'); use.className = (p.id === S.pid ? 'primary' : 'ghost') + ' pr-name';
+            use.textContent = (p.avatar || '👤') + '  ' + p.name;
+            use.onclick = () => { switchProfile(p); ov.remove(); };
+            const ed = document.createElement('button'); ed.className = 'ghost small'; ed.textContent = '✎';
+            ed.title = 'Edit'; ed.onclick = () => editView(p);
+            row.append(use, ed);
+            if (profs.length > 1) {
+                const del = document.createElement('button'); del.className = 'ghost small'; del.textContent = '🗑';
+                del.title = 'Delete profile';
+                del.onclick = () => {
+                    if (!confirm(`Delete profile "${p.name}"? Its watch history goes with it.`)) return;
+                    S.state.profiles = profs.filter(x => x.id !== p.id);
+                    if (S.state.states) delete S.state.states[p.id];
+                    // tombstone so the delete sticks across devices (server honors it on merge)
+                    S.state.profilesRemoved = { ...(S.state.profilesRemoved || {}), [p.id]: Date.now() };
+                    if (S.pid === p.id) switchProfile(S.state.profiles[0]);
+                    pushAccount(); listView();
+                };
+                row.appendChild(del);
+            }
+            card.appendChild(row);
+        }
+        if (profs.length < 3) {
+            const add = document.createElement('button'); add.className = 'ghost'; add.textContent = '+ Add profile';
+            add.onclick = () => editView(null);
+            card.appendChild(add);
+        }
+    };
+    const editView = (p) => {
+        let avatar = p?.avatar || '👤';
+        card.innerHTML = `<h3>${p ? 'Edit profile' : 'New profile'}</h3>`;
+        const nameIn = document.createElement('input'); nameIn.placeholder = 'Name'; nameIn.value = p?.name || '';
+        const picks = document.createElement('div'); picks.className = 'avatar-pick';
+        for (const a of AVATARS) {
+            const b = document.createElement('button'); b.textContent = a; b.className = a === avatar ? 'on' : '';
+            b.onclick = () => { avatar = a; [...picks.children].forEach(c => c.classList.toggle('on', c.textContent === a)); };
+            picks.appendChild(b);
+        }
+        const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+        save.onclick = () => {
+            const name = nameIn.value.trim(); if (!name) return;
+            S.state.profiles = S.state.profiles || [];
+            if (p) { p.name = name; p.avatar = avatar; if (p.id === S.pid) switchProfile(p); }
+            else {
+                const np = { id: 'p' + Date.now().toString(36), name, avatar };
+                S.state.profiles.push(np);
+                S.state.states = S.state.states || {};
+                S.state.states[np.id] = {};
+            }
+            pushAccount(); listView();
+        };
+        const back = document.createElement('button'); back.className = 'ghost'; back.textContent = '‹ Back';
+        back.onclick = listView;
+        card.append(nameIn, picks, save, back);
+    };
+    listView();
+}
 
 // ---------- account write-back (server MERGES, so partial pushes are safe) ----------
 async function pushAccount() {
@@ -590,7 +702,9 @@ function toggleWatchedTitle(t) {
 
 // ---------- settings — SAME set as the phone/Firestick, synced through the account ----------
 // local key ↔ account prefs key (the tvstate prefs blob every device shares)
-const PREF_MAP = { autonext: 'autoplayNext', subscale: 'subScale', blur: 'blurUnwatched', titles: 'showTitles', seek: 'seekStep' };
+const PREF_MAP = { autonext: 'autoplayNext', subscale: 'subScale', blur: 'blurUnwatched', titles: 'showTitles',
+                   seek: 'seekStep', sublang: 'subLang', audlang: 'audioLang', subbg: 'subBg',
+                   suboutline: 'subOutline', subpos: 'subPos' };
 const PREF = (k, d) => JSON.parse(localStorage.getItem('ckp-' + k) ?? JSON.stringify(d));
 const SETPREF = (k, v) => {
     localStorage.setItem('ckp-' + k, JSON.stringify(v));
@@ -615,6 +729,11 @@ function renderSettings() {
         ['Show titles under posters', 'titles', true],
         ['Blur unwatched episode thumbnails', 'blur', false],
         ['Subtitle size', 'subscale', 1.0, [['Small', .8], ['Normal', 1.0], ['Large', 1.3], ['Giant', 1.7]]],
+        ['Subtitle language', 'sublang', 'en', [['English', 'en'], ['Spanish', 'es'], ['French', 'fr'], ['German', 'de'], ['Portuguese', 'pt']]],
+        ['Audio language', 'audlang', 'en', [['English', 'en'], ['Spanish', 'es'], ['French', 'fr'], ['German', 'de'], ['Japanese', 'ja']]],
+        ['Subtitle background', 'subbg', false],
+        ['Subtitle outline', 'suboutline', true],
+        ['Subtitle position', 'subpos', 0, [['Normal', 0], ['Raised', 1], ['High', 2]]],
         ['Skip step', 'seek', 10, [['5s', 5], ['10s', 10], ['30s', 30]]],
     ];
     for (const [label, key, dflt, opts] of rows) {
