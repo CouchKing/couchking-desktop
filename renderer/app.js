@@ -626,6 +626,61 @@ function seasons(meta) {
     sel.value = ss.includes(startSn) ? startSn : ss[0];
     sel.onchange = () => paint(+sel.value);
     paint(+sel.value);
+    // metahub-404 fallback (Sep 13, Bleach TYBW): paint first, then swap in TMDB stills if
+    // metahub has none for this show, and repaint the open season in place
+    fixEpThumbs(meta).then(ch => { if (ch) paint(+sel.value); }).catch(() => {});
+}
+
+/** Probe one metahub episode still; on a miss swap ALL episode thumbnails to TMDB stills.
+ *  TMDB may model the show under different season numbering (TYBW = "Bleach season 2",
+ *  absolute), so episodes match by air date (exact, then ±1 day for JP-vs-US air dates),
+ *  then by unique name, then ordinally when both lists are the same length.
+ *  Mutates meta.videos in place; resolves true when anything changed. */
+const _epThumbFixed = new Set();
+function imgOk(url) {
+    return new Promise(res => {
+        const im = new Image();
+        im.onload = () => res(true); im.onerror = () => res(false);
+        setTimeout(() => res(false), 4000);
+        im.src = url;
+    });
+}
+async function fixEpThumbs(meta) {
+    const id = meta.imdb_id || meta.id || '';
+    if (!id || _epThumbFixed.has(id)) return false;
+    const eps = (meta.videos || []).filter(v => v.season > 0);
+    const probe = eps.find(v => (v.thumbnail || '').includes('episodes.metahub.space'))?.thumbnail;
+    if (!probe || await imgOk(probe)) return false;
+    _epThumbFixed.add(id);
+    try {
+        let tv = (await j(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB}&external_source=imdb_id`))?.tv_results?.[0]?.id;
+        if (!tv && meta.name)
+            tv = (await j(`https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(meta.name)}&api_key=${TMDB}`))?.results?.[0]?.id;
+        if (!tv) return false;
+        const show = await j(`https://api.themoviedb.org/3/tv/${tv}?api_key=${TMDB}`);
+        const flat = [];
+        for (const s of (show?.seasons || []).filter(s => s.season_number > 0)) {
+            const sj = await j(`https://api.themoviedb.org/3/tv/${tv}/season/${s.season_number}?api_key=${TMDB}`);
+            for (const e of (sj?.episodes || []))
+                flat.push({ date: e.air_date || '', name: (e.name || '').trim().toLowerCase(),
+                            still: e.still_path ? `https://image.tmdb.org/t/p/w500${e.still_path}` : '' });
+        }
+        const withStill = flat.filter(x => x.still);
+        if (!withStill.length) return false;
+        const byDate = {}; withStill.forEach(x => (byDate[x.date] = byDate[x.date] || []).push(x));
+        const byName = {}; withStill.forEach(x => byName[x.name] = (x.name in byName) ? null : x);
+        const shift = (d, by) => { const t = new Date(d + 'T00:00:00Z'); if (isNaN(t)) return null; t.setUTCDate(t.getUTCDate() + by); return t.toISOString().slice(0, 10); };
+        const sameLen = eps.length === flat.length;
+        let changed = false;
+        eps.forEach((e, i) => {
+            const iso = (e.released || '').slice(0, 10);
+            let still = byDate[iso]?.[0]?.still || byDate[shift(iso, 1)]?.[0]?.still || byDate[shift(iso, -1)]?.[0]?.still;
+            if (!still) still = byName[(e.name || '').trim().toLowerCase()]?.still || null;
+            if (!still && sameLen) still = flat[i].still || null;
+            if (still && still !== e.thumbnail) { e.thumbnail = still; changed = true; }
+        });
+        return changed;
+    } catch (_) { return false; }
 }
 
 // per-episode watched toggle (eye button — same as the phone/Firestick)
