@@ -935,6 +935,25 @@ async function checkUpdate() {
         if (cmp(r.version, cur) <= 0) return;
         const url = ck.platform === 'darwin' ? r.mac : r.win;
         if (!url) return;
+        // MANDATORY (AJ Sep 13, updates everywhere): below minVersion the whole app blocks
+        // behind a full-screen update panel — version skew is what breaks cross-device sync
+        const mandatory = r.minVersion && cmp(r.minVersion, cur) > 0;
+        if (mandatory) {
+            const cover = document.createElement('div');
+            cover.id = 'update-block';
+            cover.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(10,8,20,.97);' +
+                'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;text-align:center';
+            cover.innerHTML = `<div style="font-size:1.6rem;font-weight:800">Update required</div>
+                <div style="color:#9aa">This version is out of date and can't sync correctly.<br>Update to v${r.version} to keep watching.</div>`;
+            const ub = document.createElement('button');
+            ub.textContent = `⬇ Update to v${r.version}`;
+            ub.style.cssText = 'background:#f5c518;color:#1a1400;border:none;border-radius:999px;' +
+                'padding:.6rem 1.4rem;font-weight:700;cursor:pointer;font-size:1.05rem';
+            ub.onclick = () => { ck.openExternal(url); ub.textContent = '⬇ Downloading — run the installer, then reopen'; };
+            cover.appendChild(ub);
+            document.body.appendChild(cover);
+            return;
+        }
         const b = document.createElement('button');
         b.id = 'update-pill';
         b.textContent = `⬇ Update v${r.version}`;
