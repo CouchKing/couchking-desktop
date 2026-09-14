@@ -839,6 +839,17 @@ ck.onMpvPos(({ pos, dur }) => {
     if (!playing) return;
     playing.pos = pos; playing.dur = dur;
     if (dur > 0) $('playing-pos').textContent = `${fmt(pos)} / ${fmt(dur)}`;
+    // instant start-stamp (AJ Sep 13, full-sync): the moment playback begins, position +
+    // resume pointer push to the account — every other device knows within seconds,
+    // half a second of watching counts (same rule as TV v2.0)
+    if (dur > 0 && !playing.startStamped && !S.guest) {
+        playing.startStamped = true;
+        const st = pstate();
+        st.positions = st.positions || {};
+        st.positions[playing.sid] = `${Math.max(Math.round(pos * 1000), 500)}|${Math.round(dur * 1000)}|${Date.now()}`;
+        if (playing.s) st.cwlast = { ...(st.cwlast || {}), [playing.imdb]: playing.sid };
+        Promise.resolve(pushAccount()).catch(() => {});
+    }
 });
 // position where the episode is "basically over" (credits rolling) — same rule as the
 // TV player: credits lead (subs-last-cue → learned clicks → 90s), FLOORED at 80%
@@ -851,7 +862,7 @@ function finishPointSec(durSec, creditsMs, lastCueSec) {
 ck.onMpvExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     $('playing').classList.add('hidden');
     const p = playing; playing = null;
-    if (!p || !dur || pos < 5) { if (p && next) advanceNext(p); return; }
+    if (!p || !dur || pos < 0.5) { if (p && next) advanceNext(p); return; }   // 0.5s floor (AJ Sep 13, was 5s)
     const posMs = Math.floor(pos * 1000), durMs = Math.floor(dur * 1000);
     // one beacon per sit-down — powers For You + cross-device resume (same as TV app);
     // a human's next-click near the end also teaches the server where credits start
