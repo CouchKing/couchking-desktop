@@ -172,7 +172,7 @@
                 }
                 return cues;
             };
-            let subList = [], curSub = null;
+            let subList = [], curSub = null, subAbort = null, subAuto = true;
             const paintCue = () => {
                 if (!state) return;
                 const t = cur();
@@ -181,12 +181,36 @@
                 if (cueEl.dataset.t !== want) { cueEl.dataset.t = want; cueEl.textContent = want; }
                 cueEl.style.display = want ? 'block' : 'none';
             };
-            const selectSub = async (s) => {
-                curSub = s;
+            // Embedded tracks stream PROGRESSIVELY from the current position: subtitle
+            // packets are interleaved through the whole video, so a from-the-top pull
+            // would take minutes — from-here makes the visible cues arrive immediately
+            // while the rest fills in behind. -copyts on the server keeps timestamps
+            // absolute, so cues drop straight into the same clock as everything else.
+            const loadEmbed = (s, from) => {
+                const ac = new AbortController(); subAbort = ac;
+                fetch(`${SVC}/webplay/subx?u=${u}&i=${s.embed}&t=${Math.max(0, Math.floor((from || 0) - 8))}`,
+                    { signal: ac.signal }).then(async r => {
+                    if (!r.ok || !r.body) return;
+                    const rd = r.body.getReader(); const dec = new TextDecoder();
+                    let buf = '';
+                    while (true) {
+                        const { done, value } = await rd.read();
+                        if (!state || curSub !== s) { ac.abort(); return; }
+                        if (value) { buf += dec.decode(value, { stream: true }); state.cues = parseVtt(buf); }
+                        if (done) break;
+                    }
+                    if (state && curSub === s)
+                        state.lastCue = state.cues.reduce((m, c) => Math.max(m, c.e), 0);
+                }).catch(() => {});
+            };
+            const selectSub = async (s, auto) => {
+                curSub = s; subAuto = !!auto;
+                if (subAbort) { subAbort.abort(); subAbort = null; }
                 if (state) state.cues = [];
                 paintCue();
                 player.querySelector('.wp-subs').classList.toggle('on', !!s);
                 if (!s) return;
+                if (s.embed != null) { loadEmbed(s, cur()); return; }
                 try {
                     // downloaded episodes carry their subtitle text INSIDE the meta (offline)
                     const txt = s.vtt || await httpText(`${SVC}/websub?u=${b64u(s.url)}`);
@@ -220,46 +244,40 @@
             }
             if (sid && !localFile) {
                 const type = sid.includes(':') ? 'series' : 'movie';
-                // RANKED subs from the addon stream FIRST (release-matched = best sync, same
-                // list the Firestick gets — AJ Sep 13: web only ever showed ONE English);
-                // the public feed then fills more English options + other languages.
-                const engCount = () => subList.filter(x => /^English/i.test(x.lang || '')).length;
+                // ENGLISH ONLY, BEST FIRST (AJ Sep 14): embedded in-video tracks land on
+                // top when the probe answers (exact-release sync), then the addon's
+                // RANKED list (release-matched, HI labeled), then feed extras. No other
+                // languages in the menu at all.
+                const engCount = () => subList.filter(x => x.url).length;
                 subList = (subs || []).filter(x => x && x.url)
-                    .map((x, i) => ({ url: x.url, lang: 'English ' + (i + 1) }));
-                if (subLang !== 'off' && subList[0]) selectSub(subList[0]);
+                    .map((x, i) => ({ url: x.url, lang: x.name || 'English ' + (i + 1) }));
+                if (subLang !== 'off' && subList[0]) selectSub(subList[0], true);
                 httpText(`https://opensubtitles-v3.strem.io/subtitles/${type}/${encodeURIComponent(sid)}.json`)
                     .then(t => JSON.parse(t || '{}')).then(d => {
                         const haveUrl = new Set(subList.map(x => x.url));
-                        const perLang = new Set();
                         for (const s of (d.subtitles || [])) {
                             if (!s.url || haveUrl.has(s.url)) continue;
-                            const en = /^en/i.test(s.lang || '');
-                            if (en) {
-                                // was capped at 6 — phones list the full feed, and AJ
-                                // noticed ("more subtitle options on my phone")
-                                if (engCount() >= 20) continue;
-                                subList.push({ url: s.url, lang: 'English ' + (engCount() + 1) });
-                            } else {
-                                if (perLang.has(s.lang)) continue;
-                                perLang.add(s.lang);
-                                subList.push({ url: s.url, lang: s.lang });
-                            }
+                            if (!/^en/i.test(s.lang || '')) continue;
+                            if (engCount() >= 20) break;
+                            subList.push({ url: s.url, lang: 'English ' + (engCount() + 1) });
                             haveUrl.add(s.url);
                         }
                         if (subLang === 'off' || curSub) return;
-                        const pref = subList.find(x => (x.lang || '').toLowerCase().startsWith(subLang))
-                            || subList.find(x => /^English/i.test(x.lang || ''));
-                        if (pref) selectSub(pref);
+                        const pref = subList.find(x => x.url);
+                        if (pref) selectSub(pref, true);
                     }).catch(() => {});
             }
             player.querySelector('.wp-subs').onclick = () => menu.classList.contains('hidden')
                 ? openMenu('Subtitles', [['Subtitles off', () => selectSub(null), !curSub],
                     ...subList.map(s => [s.lang || '?', () => selectSub(s), curSub === s])])
                 : menu.classList.add('hidden');
+            // reset timers are CANCELLED on re-click — stacked timeouts made the label
+            // flip back mid-cycling and lag behind fast presses (AJ Sep 14)
+            let sizeT = null, fitT = null;
             player.querySelector('.wp-subsize').onclick = () => {
                 sizeIx = (sizeIx + 1) % SIZES.length; styleCue();
                 const c = player.querySelector('.wp-subsize'); c.textContent = SIZES[sizeIx][1];
-                setTimeout(() => { c.textContent = 'Aa'; }, 1200);
+                clearTimeout(sizeT); sizeT = setTimeout(() => { c.textContent = 'Aa'; }, 1200);
             };
             const FITS = [['contain', 'Fit'], ['cover', 'Fill'], ['fill', 'Stretch']];
             let fitIx = 0;
@@ -267,7 +285,7 @@
                 fitIx = (fitIx + 1) % FITS.length;
                 v.style.objectFit = FITS[fitIx][0];
                 const c = player.querySelector('.wp-scale'); c.textContent = FITS[fitIx][1];
-                setTimeout(() => { c.textContent = '⤢'; }, 1200);
+                clearTimeout(fitT); fitT = setTimeout(() => { c.textContent = '⤢'; }, 1200);
             };
             // Speed: real menu, same options + look as the TV/player apps
             const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -296,6 +314,27 @@
                 httpText(`${SVC}/webplay/probe?u=${u}`).then(t => {
                     const d = JSON.parse(t || '{}');
                     if (state) { state.dur = d.duration || 0; paint(); }
+                    // embedded ENGLISH tracks (full + SDH; forced skipped) go on TOP of
+                    // the subtitle menu — cut for this exact release, best sync we have.
+                    // An automatic pick upgrades to the full embedded track; a choice
+                    // the viewer made by hand is never overridden.
+                    if (state && Array.isArray(d.subs) && !localFile) {
+                        const isEng = x => /^en/i.test(x.lang || '') || /english/i.test(x.title || '');
+                        const isSdh = x => !!x.hi || /sdh|hearing|\bcc\b/i.test(x.title || '');
+                        const isForced = x => !!x.forced || /forced/i.test(x.title || '');
+                        const emb = d.subs.filter(x => isEng(x) && !isForced(x))
+                            .sort((a, b) => isSdh(a) - isSdh(b))
+                            .map(x => ({ embed: x.i, lang: 'English — in video' + (isSdh(x) ? ' (SDH)' : '') }));
+                        const seen = {};
+                        for (const e of emb) {
+                            if (seen[e.lang]) e.lang += ' ' + (++seen[e.lang]);
+                            else seen[e.lang] = 1;
+                        }
+                        if (emb.length) {
+                            subList.unshift(...emb);
+                            if (subLang !== 'off' && (subAuto || !curSub)) selectSub(emb[0], true);
+                        }
+                    }
                 }).catch(() => {});
 
             const cur = () => state ? state.offset + (v.currentTime || 0) : 0;
@@ -311,6 +350,12 @@
                 if (!state) return;
                 t = Math.max(0, state.dur ? Math.min(t, state.dur - 5) : t);
                 state.offset = t; v.src = src(t); syncStart(t);
+                // an embedded track only streamed from the old position — refetch from here
+                if (curSub && curSub.embed != null) {
+                    if (subAbort) subAbort.abort();
+                    state.cues = [];
+                    loadEmbed(curSub, t);
+                }
                 v.playbackRate = state.speed;
                 v.play().catch(() => {});
                 paintCue();
