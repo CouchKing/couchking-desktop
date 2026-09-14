@@ -886,6 +886,11 @@ const profKey = () => (S.email || 'guest') + '|' + (S.pid || '');
 const dlKeyOf = (sid) => (profKey() + '_' + String(sid || '')).replace(/[^\w]+/g, '_');
 async function startDownload(st, sid, label) {
     const imdb = sid.split(':')[0]; const [, s, e] = sid.split(':');
+    // real size up front, one tap to approve (AJ Sep 14: no more surprise 8GB downloads)
+    if (ck.dlSize) {
+        const { bytes } = await ck.dlSize(st.url);
+        if (bytes > 0 && !confirm(`Download ${gb(bytes)}${bytes > 5e9 ? ' — that’s a big file' : ''}?`)) return;
+    }
     // capture the learned intro/credits windows NOW — offline play can't ask later
     let introFromMs = -1, introToMs = -1, creditsMs = 0;
     try {

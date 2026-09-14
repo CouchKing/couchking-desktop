@@ -232,6 +232,18 @@ function dlBroadcast(ch, d) { try { win?.webContents.send(ch, d); } catch {} }
 function dlMetaPath(key) { return path.join(DL_DIR, key + '.json'); }
 function dlFilePath(key) { return path.join(DL_DIR, key + '.mp4'); }
 
+// preflight size check — the confirm dialog shows REAL gigabytes before anything starts
+// (AJ Sep 14: a 7.9GB movie snuck through with no warning)
+ipcMain.handle('dl-size', async (_e, { url }) => {
+    try {
+        const h = await fetch(url, { headers: { Range: 'bytes=0-0' }, redirect: 'follow' });
+        const cr = h.headers.get('content-range');
+        const n = cr ? parseInt(cr.split('/')[1]) || 0 : parseInt(h.headers.get('content-length')) || 0;
+        try { h.body?.cancel(); } catch {}
+        return { bytes: n };
+    } catch { return { bytes: 0 }; }
+});
+
 ipcMain.handle('dl-list', () => {
     try {
         if (!fs.existsSync(DL_DIR)) return [];
