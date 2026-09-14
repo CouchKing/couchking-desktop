@@ -36,6 +36,8 @@
       <div class="rail-item nav" data-nav="home"><span class="ricon">🏠</span><span class="rail-label">Home</span></div>
       <div class="rail-item nav" data-nav="discover"><span class="ricon">🧭</span><span class="rail-label">Discover</span></div>
       <div class="rail-item nav" data-nav="library"><span class="ricon">📚</span><span class="rail-label">Library</span></div>
+      <!-- desktop only — the web shim hides it (browsers can't hold GBs) -->
+      <div class="rail-item nav hidden" data-nav="downloads" id="rail-downloads"><span class="ricon">⬇️</span><span class="rail-label">Downloads</span></div>
       <div class="rail-item nav" data-nav="settings"><span class="ricon">⚙️</span><span class="rail-label">Settings</span></div>
     </nav>
 
@@ -61,6 +63,8 @@
       </section>
 
       <section id="view-library" class="page hidden"><div class="page-pad" id="library-body"></div></section>
+
+      <section id="view-downloads" class="page hidden"><div class="page-pad" id="downloads-body"></div></section>
 
       <section id="view-settings" class="page hidden"><div class="page-pad" id="settings-body"></div></section>
 

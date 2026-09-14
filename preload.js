@@ -13,4 +13,10 @@ contextBridge.exposeInMainWorld('ck', {
     onUpdReady: (cb) => ipcRenderer.on('upd-ready', (_e, d) => cb(d)),
     applyUpdate: () => ipcRenderer.invoke('apply-update'),
     onMpvPos: (cb) => ipcRenderer.on('mpv-pos', (_e, d) => cb(d)),
+    dlStart: (opts) => ipcRenderer.invoke('dl-start', opts),
+    dlList: () => ipcRenderer.invoke('dl-list'),
+    dlDelete: (key) => ipcRenderer.invoke('dl-delete', { key }),
+    onDlProg: (cb) => ipcRenderer.on('dl-prog', (_e, d) => cb(d)),
+    onDlDone: (cb) => ipcRenderer.on('dl-done', (_e, d) => cb(d)),
+    onDlErr: (cb) => ipcRenderer.on('dl-err', (_e, d) => cb(d)),
 });

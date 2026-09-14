@@ -290,3 +290,15 @@ select:focus, select:hover { border-color:var(--accent); }
 .cast-row { display:flex; gap:.45rem; flex-wrap:wrap; margin:.5rem 0; }
 .chip-cast { cursor:pointer; }
 .chip-cast:hover { background:#3a3560; }
+
+/* ---- offline downloads (desktop only; the rail item stays hidden on web) ---- */
+.stream { position: relative; }
+.dl-btn { position: absolute; right: .6rem; top: .6rem; opacity: .55; }
+.stream:hover .dl-btn { opacity: 1; }
+.dl-opts { margin: .4rem 0 1.1rem; display: flex; align-items: center; flex-wrap: wrap; }
+.dl-row { display: flex; align-items: center; gap: .9rem; padding: .45rem .2rem; border-bottom: 1px solid rgba(255,255,255,.06); }
+.dl-row img { width: 46px; height: 69px; object-fit: cover; border-radius: 6px; }
+.dl-info { flex: 1; display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.dl-info b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-show { margin: .3rem 0; }
+.dl-show summary { cursor: pointer; padding: .5rem .2rem; }

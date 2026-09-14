@@ -110,11 +110,12 @@ let page = 'home';
 function nav(which) {
     page = which;
     document.querySelectorAll('.rail-item.nav').forEach(n => n.classList.toggle('on', n.dataset.nav === which));
-    for (const v of ['home', 'search', 'discover', 'library', 'settings', 'detail', 'person', 'episode'])
+    for (const v of ['home', 'search', 'discover', 'library', 'downloads', 'settings', 'detail', 'person', 'episode'])
         $('view-' + v)?.classList.toggle('hidden', v !== which);
     if (which === 'search') setTimeout(() => $('search').focus(), 50);
     if (which === 'discover' && !$('discover-rows').childElementCount) discover();
     if (which === 'library') library();
+    if (which === 'downloads') downloadsPage();
     if (which === 'settings') renderSettings();
 }
 function show(which) {
@@ -865,9 +866,109 @@ async function pickStream(sid, label, autoFirst = false) {
     for (const st of streams) {
         const el = streamEl(st);
         el.onclick = () => start(st);
+        // desktop: one-tap offline download per stream (web can't hold GBs — no button)
+        if (ck.dlStart) {
+            const dl = document.createElement('button');
+            dl.className = 'ghost small dl-btn'; dl.textContent = '⬇'; dl.title = 'Download for offline';
+            dl.onclick = (ev) => { ev.stopPropagation(); startDownload(st, sid, label); };
+            el.appendChild(dl);
+        }
         holder.appendChild(el);
     }
 }
+
+// ---------- OFFLINE DOWNLOADS (desktop only — ck.dlStart exists only under Electron) ----
+// AJ Sep 14 spec: easy download, easy delete, Movies + Shows grouped (show → seasons →
+// episodes), and offline play keeps EVERYTHING — subs, skip-intro, credits/up-next.
+const dlKeyOf = (sid) => String(sid || '').replace(/[^\w]+/g, '_');
+async function startDownload(st, sid, label) {
+    const imdb = sid.split(':')[0]; const [, s, e] = sid.split(':');
+    // capture the learned intro/credits windows NOW — offline play can't ask later
+    let introFromMs = -1, introToMs = -1, creditsMs = 0;
+    try {
+        const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`);
+        if (r) {
+            if (r.introFrom != null && r.introTo > r.introFrom) { introFromMs = r.introFrom; introToMs = r.introTo; }
+            if (r.credits > 0) creditsMs = r.credits;
+        }
+    } catch {}
+    const res = await ck.dlStart({ sid, url: st.url, title: label, poster: cur?.meta?.poster || '',
+        kind: sid.includes(':') ? 'episode' : 'movie', showName: cur?.meta?.name || label, epName: label,
+        season: +s || 0, episode: +e || 0, subs: st.subtitles || [],
+        introFromMs, introToMs, creditsMs, capGB: PREF('dlcap', 30) });
+    toast(res?.ok ? '⬇ Downloading — see Downloads in the sidebar' : 'Download failed: ' + (res?.error || 'unknown'));
+}
+const gb = (n) => (n / 1e9).toFixed(1) + ' GB';
+async function downloadsPage() {
+    const body = $('downloads-body');
+    if (!ck.dlList) { body.innerHTML = '<p class="muted">Downloads are a desktop-app feature.</p>'; return; }
+    const items = await ck.dlList();
+    body.innerHTML = `<h2>Downloads</h2>
+        <div class="dl-opts muted">
+          <label><input type="checkbox" id="dl-autodel" ${PREF('dlautodel', false) ? 'checked' : ''}> Auto-delete watched</label>
+          <label style="margin-left:1.2rem">Storage cap
+            <input type="number" id="dl-cap" min="5" max="500" value="${PREF('dlcap', 30)}" style="width:4.5rem"> GB</label>
+          <span style="margin-left:1.2rem">${items.length ? 'Using ' + gb(items.reduce((a, x) => a + (x.bytes || 0), 0)) : ''}</span>
+        </div>`;
+    $('dl-autodel').onchange = (e2) => localStorage.setItem('ckp-dlautodel', JSON.stringify(e2.target.checked));
+    $('dl-cap').onchange = (e2) => localStorage.setItem('ckp-dlcap', JSON.stringify(Math.max(5, +e2.target.value || 30)));
+    if (!items.length) { body.insertAdjacentHTML('beforeend', '<p class="muted">Nothing downloaded yet — hit ⬇ on any stream.</p>'); return; }
+    const row = (m) => {
+        const d = document.createElement('div'); d.className = 'dl-row'; d.dataset.key = m.key;
+        const pctTxt = m.done ? gb(m.bytes || 0) : (m.active ? `downloading… ${gb(m.bytes || 0)}${m.est ? ' of ~' + gb(m.est) : ''}` : 'failed');
+        d.innerHTML = `<img src="${IMG(m.poster, 154)}" onerror="this.style.visibility='hidden'">
+            <div class="dl-info"><b>${m.kind === 'episode' ? `S${m.season}E${m.episode} — ${m.epName || m.title}` : m.title}</b>
+            <span class="muted dl-size">${pctTxt}</span></div>
+            <button class="primary small">▶ Play</button><button class="ghost small">🗑 Delete</button>`;
+        const [playB, delB] = d.querySelectorAll('button');
+        playB.onclick = () => m.done && playDownload(m);
+        delB.onclick = async () => { await ck.dlDelete(m.key); toast('Deleted — space freed'); downloadsPage(); };
+        return d;
+    };
+    const movies = items.filter(x => x.kind !== 'episode').sort((a, b) => b.ts - a.ts);
+    if (movies.length) {
+        body.insertAdjacentHTML('beforeend', '<div class="row-label">Movies</div>');
+        movies.forEach(m => body.appendChild(row(m)));
+    }
+    const shows = {};
+    for (const it of items.filter(x => x.kind === 'episode')) (shows[it.showName || it.sid.split(':')[0]] ??= []).push(it);
+    if (Object.keys(shows).length) body.insertAdjacentHTML('beforeend', '<div class="row-label">Shows</div>');
+    for (const [name, eps] of Object.entries(shows)) {
+        const det = document.createElement('details'); det.className = 'dl-show';
+        det.innerHTML = `<summary><b>${name}</b> <span class="muted">${eps.length} episode${eps.length > 1 ? 's' : ''} · ${gb(eps.reduce((a, x) => a + (x.bytes || 0), 0))}</span></summary>`;
+        const bySeason = {};
+        for (const ep2 of eps) (bySeason[ep2.season] ??= []).push(ep2);
+        for (const sn of Object.keys(bySeason).sort((a, b) => a - b)) {
+            det.insertAdjacentHTML('beforeend', `<div class="row-label" style="font-size:.9em">Season ${sn}</div>`);
+            bySeason[sn].sort((a, b) => a.episode - b.episode).forEach(m => det.appendChild(row(m)));
+        }
+        body.appendChild(det);
+    }
+}
+function playDownload(m) {
+    const [, s, e] = String(m.sid).split(':');
+    const st = pstate();
+    const [lp, ld] = String((st.positions || {})[m.sid] || '').split('|').map(Number);
+    const startSec = (lp > 60000 && ld > 0 && lp / ld < 0.92) ? Math.floor(lp / 1000) : 0;
+    const label = m.kind === 'episode' ? `${m.showName} S${m.season}E${m.episode}` : m.title;
+    playing = { sid: m.sid, imdb: m.sid.split(':')[0], s, e, label, pos: 0, dur: 0,
+                startMs: startSec * 1000, credits: m.creditsMs || 0, next: null };
+    const fileUrl = encodeURI('file://' + (m.file.startsWith('/') ? '' : '/') + m.file.replace(/\\/g, '/'));
+    ckPlay({ localFile: fileUrl, url: m.file, title: label, startSec, sid: m.sid,
+        inlineSubs: m.subs || [], probeDur: m.durSec || 0,
+        introFromMs: m.introFromMs ?? -1, introToMs: m.introToMs ?? -1, creditsMs: m.creditsMs || 0,
+        subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), subBg: PREF('subbg', false),
+        subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0), seekStep: PREF('seek', 10),
+        hasNext: false, autonext: false });
+}
+// live progress on the Downloads page; errors surface as toasts wherever you are
+ck.onDlProg?.((d) => {
+    if (page !== 'downloads') return;
+    const el = document.querySelector(`.dl-row[data-key="${d.key}"] .dl-size`);
+    if (el) el.textContent = `downloading… ${gb(d.got)}${d.est ? ' of ~' + gb(d.est) : ''}`;
+});
+ck.onDlDone?.(() => { toast('⬇ Download finished'); if (page === 'downloads') downloadsPage(); });
+ck.onDlErr?.((d) => toast('Download failed: ' + (d?.error || '')));
 
 function nextEpisodeOf(sid) {
     if (!cur?.meta?.videos || !sid.includes(':')) return null;
@@ -980,6 +1081,8 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     const finish = finishPointSec(dur, p.credits, lastCue);
     const realSit = posMs - p.startMs >= 120000 || posMs >= durMs - 5000;
     const watchedNow = pos >= finish && realSit;
+    // finished a downloaded copy + "Auto-delete watched" on → space back immediately
+    if (watchedNow && ck.dlDelete && PREF('dlautodel', false)) try { ck.dlDelete(dlKeyOf(p.sid)); } catch {}
     if (!S.guest) {
         const st = pstate();
         // STAMPED position + cwlast into the synced blob — exactly what the Android apps
@@ -1027,6 +1130,7 @@ $('back').onclick = () => { nav('home'); };
 
 (async () => {
     SERVICE = await ck.service();
+    if (ck.dlStart) $('rail-downloads')?.classList.remove('hidden');   // desktop only
     const saved = JSON.parse(localStorage.getItem('ck') || 'null');
     if (saved?.token) { S.email = saved.email; S.token = saved.token; await bootstrap(); }
     else show('auth');

@@ -216,3 +216,107 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, su
     return { ok: true };
 });
 ipcMain.handle('stopPlay', () => { stopMpv(); return { ok: true }; });
+
+// ---- OFFLINE DOWNLOADS (0.9.14, AJ Sep 14) ----
+// Files land in the app's own userData/Downloads (delete = space back instantly, uninstall
+// wipes them). The media rides the SAME /webplay remux the in-window player uses — h264+AAC
+// mp4 that the <video> element plays straight off disk. Subtitles + the learned skip-intro /
+// credits windows are captured INTO the meta at download time, so offline play has
+// everything the online player has.
+const DL_DIR = path.join(app.getPath('userData'), 'Downloads');
+const dlKey = (sid) => String(sid || '').replace(/[^\w]+/g, '_');
+const dlActive = new Map();   // key -> AbortController
+const b64u = (s) => Buffer.from(String(s)).toString('base64url');
+
+function dlBroadcast(ch, d) { try { win?.webContents.send(ch, d); } catch {} }
+function dlMetaPath(key) { return path.join(DL_DIR, key + '.json'); }
+function dlFilePath(key) { return path.join(DL_DIR, key + '.mp4'); }
+
+ipcMain.handle('dl-list', () => {
+    try {
+        if (!fs.existsSync(DL_DIR)) return [];
+        return fs.readdirSync(DL_DIR).filter(f => f.endsWith('.json')).map(f => {
+            try {
+                const m = JSON.parse(fs.readFileSync(path.join(DL_DIR, f), 'utf8'));
+                const fp = dlFilePath(m.key);
+                m.bytes = fs.existsSync(fp) ? fs.statSync(fp).size : 0;
+                m.file = fp;
+                m.active = dlActive.has(m.key);
+                return m;
+            } catch { return null; }
+        }).filter(Boolean);
+    } catch { return []; }
+});
+
+ipcMain.handle('dl-delete', (_e, { key }) => {
+    try { dlActive.get(key)?.abort(); dlActive.delete(key); } catch {}
+    for (const p of [dlFilePath(key), dlMetaPath(key)])
+        try { fs.rmSync(p, { force: true }); } catch {}
+    return { ok: true };
+});
+
+ipcMain.handle('dl-start', async (_e, opts) => {
+    const { sid, url, title, poster = '', kind = 'movie', showName = '', epName = '',
+            season = 0, episode = 0, durSec = 0, subs = [],
+            introFromMs = -1, introToMs = -1, creditsMs = 0, capGB = 30 } = opts || {};
+    const key = dlKey(sid);
+    if (!key || !url) return { ok: false, error: 'bad args' };
+    if (dlActive.has(key)) return { ok: false, error: 'already downloading' };
+    fs.mkdirSync(DL_DIR, { recursive: true });
+    // size estimate from the SOURCE file (remux ≈ source: video copied, audio swapped)
+    let est = 0;
+    try {
+        const h = await fetch(url, { headers: { Range: 'bytes=0-0' }, redirect: 'follow' });
+        const cr = h.headers.get('content-range');
+        est = cr ? parseInt(cr.split('/')[1]) || 0 : parseInt(h.headers.get('content-length')) || 0;
+        try { h.body?.cancel(); } catch {}
+    } catch {}
+    // guardrails: storage cap (Settings) + a hard 5GB free-disk floor
+    try {
+        const used = fs.readdirSync(DL_DIR).reduce((a, f) => a + fs.statSync(path.join(DL_DIR, f)).size, 0);
+        if (est && used + est > capGB * 1e9)
+            return { ok: false, error: `storage cap (${capGB} GB) would be exceeded — delete something first` };
+        const free = fs.statfsSync(app.getPath('userData')).bavail * fs.statfsSync(app.getPath('userData')).bsize;
+        if (free < (est || 3e9) + 5e9) return { ok: false, error: 'not enough disk space' };
+    } catch {}
+    // subtitles go INTO the meta as text — offline play needs zero network
+    const subTexts = [];
+    for (const s of (subs || []).slice(0, 3)) {
+        if (!s?.url) continue;
+        try {
+            const t = await (await fetch(`${SERVICE}/websub?u=${b64u(s.url)}`)).text();
+            if (t && /-->/.test(t)) subTexts.push({ lang: 'English ' + (subTexts.length + 1), vtt: t });
+        } catch {}
+    }
+    const meta = { key, sid, title, poster, kind, showName, epName, season, episode,
+                   durSec, introFromMs, introToMs, creditsMs, subs: subTexts,
+                   est, done: false, ts: Date.now() };
+    fs.writeFileSync(dlMetaPath(key), JSON.stringify(meta));
+    const ctl = new AbortController();
+    dlActive.set(key, ctl);
+    (async () => {
+        try {
+            const r = await fetch(`${SERVICE}/webplay?u=${b64u(url)}&t=0`, { signal: ctl.signal });
+            if (!r.ok || !r.body) throw new Error('webplay ' + r.status);
+            const out = fs.createWriteStream(dlFilePath(key));
+            let got = 0, lastTick = 0;
+            for await (const chunk of r.body) {
+                out.write(chunk);
+                got += chunk.length;
+                if (Date.now() - lastTick > 700) {
+                    lastTick = Date.now();
+                    dlBroadcast('dl-prog', { key, got, est });
+                }
+            }
+            await new Promise(res => out.end(res));
+            if (got < 20e6) throw new Error('stream ended early (' + got + ' bytes)');
+            meta.done = true; meta.bytes = got;
+            fs.writeFileSync(dlMetaPath(key), JSON.stringify(meta));
+            dlBroadcast('dl-done', { key, got });
+        } catch (e2) {
+            try { fs.rmSync(dlFilePath(key), { force: true }); fs.rmSync(dlMetaPath(key), { force: true }); } catch {}
+            if (!ctl.signal.aborted) dlBroadcast('dl-err', { key, error: String(e2).slice(0, 160) });
+        } finally { dlActive.delete(key); }
+    })();
+    return { ok: true, key, est };
+});
