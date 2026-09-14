@@ -52,7 +52,7 @@
                 return { ok: r.ok, status: r.status, text: await r.text() };
             } catch (e) { return { ok: false, status: 0, text: String(e).slice(0, 200) }; }
         },
-        play: async ({ url, title, startSec = 0, seekStep = 10, sid = '',
+        play: async ({ url, title, startSec = 0, seekStep = 10, sid = '', subs = [],
                        subScale = 1.0, subLang = 'en', subBg = false, subOutline = true, subPos = 0,
                        introFromMs = -1, introToMs = -1, creditsMs = 0,
                        nextLabel = '', hasNext = false, autonext = true }) => {
@@ -170,13 +170,33 @@
             };
             if (sid) {
                 const type = sid.includes(':') ? 'series' : 'movie';
+                // RANKED subs from the addon stream FIRST (release-matched = best sync, same
+                // list the Firestick gets — AJ Sep 13: web only ever showed ONE English);
+                // the public feed then fills more English options + other languages.
+                const engCount = () => subList.filter(x => /^English/i.test(x.lang || '')).length;
+                subList = (subs || []).filter(x => x && x.url)
+                    .map((x, i) => ({ url: x.url, lang: 'English ' + (i + 1) }));
+                if (subLang !== 'off' && subList[0]) selectSub(subList[0]);
                 fetch(`https://opensubtitles-v3.strem.io/subtitles/${type}/${encodeURIComponent(sid)}.json`)
                     .then(r => r.json()).then(d => {
-                        const seen = new Set();
-                        subList = (d.subtitles || []).filter(s => s.url && !seen.has(s.lang) && seen.add(s.lang));
-                        if (subLang === 'off') return;   // Subtitles language: Off — user picks manually
-                        const pref = subList.find(s => (s.lang || '').toLowerCase().startsWith(subLang))
-                            || subList.find(s => /^en/i.test(s.lang || ''));
+                        const haveUrl = new Set(subList.map(x => x.url));
+                        const perLang = new Set();
+                        for (const s of (d.subtitles || [])) {
+                            if (!s.url || haveUrl.has(s.url)) continue;
+                            const en = /^en/i.test(s.lang || '');
+                            if (en) {
+                                if (engCount() >= 6) continue;
+                                subList.push({ url: s.url, lang: 'English ' + (engCount() + 1) });
+                            } else {
+                                if (perLang.has(s.lang)) continue;
+                                perLang.add(s.lang);
+                                subList.push({ url: s.url, lang: s.lang });
+                            }
+                            haveUrl.add(s.url);
+                        }
+                        if (subLang === 'off' || curSub) return;
+                        const pref = subList.find(x => (x.lang || '').toLowerCase().startsWith(subLang))
+                            || subList.find(x => /^English/i.test(x.lang || ''));
                         if (pref) selectSub(pref);
                     }).catch(() => {});
             }

@@ -91,7 +91,7 @@ function stopMpv() {
 // Launch mpv fullscreen for a stream; report position over IPC so the renderer can
 // beacon /player/progress (cross-device resume) exactly like the TV app does on exit.
 ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, subLang = 'en',
-        audioLang = 'en', subBg = false, subOutline = true, subPos = 0 }) => {
+        audioLang = 'en', subBg = false, subOutline = true, subPos = 0, subs = [] }) => {
     stopMpv();
     lastPos = 0; lastDur = 0;
     mpvIpcPath = process.platform === 'win32'
@@ -112,6 +112,11 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, su
         '--osc=yes', '--osd-bar=yes'
     ];
     if (startSec > 5) args.push('--start=' + Math.floor(startSec));
+    // ranked OpenSubtitles from the addon (release-matched = best sync) — same list the
+    // Firestick gets; they show up in mpv's subtitle cycle (j key / OSC menu). Before
+    // this the desktop only ever saw the file's embedded track (AJ Sep 13).
+    for (const sub of (subs || []).slice(0, 5))
+        if (sub && sub.url) args.push('--sub-file=' + sub.url);
     args.push(url);
     const bin = mpvBinary();
     repairMpvMac(bin);

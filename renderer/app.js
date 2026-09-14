@@ -780,7 +780,7 @@ function playEpisodeStream(s, meta, ep, sid, label) {
         st.cwlast = { ...(st.cwlast || {}), [meta.id]: sid };
         pushAccount();
     }
-    play(s.url, label, sid);
+    play(s.url, label, sid, s.subtitles || null);
 }
 
 // ---------- streams + play ----------
@@ -829,7 +829,7 @@ async function pickStream(sid, label, autoFirst = false) {
             pushContinueLocal({ id: sid.split(':')[0], type, name: cur.meta.name, poster: cur.meta.poster || '' });
             pushAccount();
         }
-        play(st.url, label, sid);
+        play(st.url, label, sid, st.subtitles || null);
     };
     if (autoFirst && streams[0]) { start(streams[0]); return; }
     holder.innerHTML = '<div class="row-label">Streams</div>';
@@ -850,7 +850,7 @@ function nextEpisodeOf(sid) {
 }
 
 let playing = null;
-async function play(url, label, sid) {
+async function play(url, label, sid, subs = null) {
     const imdb = sid.split(':')[0];
     const [, s, e] = sid.split(':');
     // cross-device resume + learned intro window + learned credits point, one call
@@ -873,7 +873,7 @@ async function play(url, label, sid) {
         $('playing-title').textContent = label;
         $('playing').classList.remove('hidden');
     }
-    await ck.play({ url, title: label, startSec, sid,
+    await ck.play({ url, title: label, startSec, sid, subs: subs || [],
         subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), audioLang: PREF('audlang', 'en'),
         subBg: PREF('subbg', false), subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0),
         seekStep: PREF('seek', 10),
