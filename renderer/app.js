@@ -886,8 +886,24 @@ const profKey = () => (S.email || 'guest') + '|' + (S.pid || '');
 const dlKeyOf = (sid) => (profKey() + '_' + String(sid || '')).replace(/[^\w]+/g, '_');
 async function startDownload(st, sid, label) {
     const imdb = sid.split(':')[0]; const [, s, e] = sid.split(':');
-    // real size up front, one tap to approve (AJ Sep 14: no more surprise 8GB downloads)
-    if (ck.dlSize) {
+    // LEAN PICK (AJ Sep 14, "Black Panther is 7.9GB"): the visible list is quality-ranked
+    // top-3 — /dlpick scans the FULL candidate pool server-side and offers the smallest
+    // healthy H264 per tier with real sizes. Decline 1080p → offered 720p → abort.
+    let dlUrl = st.url, dlSubs = st.subtitles || [];
+    let picked = false;
+    try {
+        const d = await j(`${SERVICE}/dlpick/${S.subKey}?i=${imdb}&s=${s || ''}&e=${e || ''}&t=${encodeURIComponent(cur?.meta?.name || label)}&u=${encodeURIComponent(S.useg)}`);
+        for (const o of (d?.options || [])) {
+            if (confirm(`Download ${o.q} — ${gb(+o.bytes || 0)}?`)) {
+                dlUrl = o.url; picked = true;
+                if (d.subtitles?.length) dlSubs = d.subtitles;
+                break;
+            }
+        }
+        if (!picked && (d?.options || []).length) return;   // saw real options, declined all
+    } catch {}
+    // no lean options (rare/offline titles): confirm the clicked stream's real size instead
+    if (!picked && ck.dlSize) {
         const { bytes } = await ck.dlSize(st.url);
         if (bytes > 0 && !confirm(`Download ${gb(bytes)}${bytes > 5e9 ? ' — that’s a big file' : ''}?`)) return;
     }
@@ -900,9 +916,9 @@ async function startDownload(st, sid, label) {
             if (r.credits > 0) creditsMs = r.credits;
         }
     } catch {}
-    const res = await ck.dlStart({ sid, prof: profKey(), url: st.url, title: label, poster: cur?.meta?.poster || '',
+    const res = await ck.dlStart({ sid, prof: profKey(), url: dlUrl, title: label, poster: cur?.meta?.poster || '',
         kind: sid.includes(':') ? 'episode' : 'movie', showName: cur?.meta?.name || label, epName: label,
-        season: +s || 0, episode: +e || 0, subs: st.subtitles || [],
+        season: +s || 0, episode: +e || 0, subs: dlSubs,
         introFromMs, introToMs, creditsMs, capGB: PREF('dlcap', 30) });
     toast(res?.ok ? '⬇ Downloading — see Downloads in the sidebar' : 'Download failed: ' + (res?.error || 'unknown'));
 }
