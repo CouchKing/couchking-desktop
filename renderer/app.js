@@ -589,6 +589,7 @@ async function detail(t) {
         <div class="d-desc">${meta.description || ''}</div>
         <div class="d-btns">
           ${t.type === 'movie' && hasService() ? `<button class="primary" id="d-play">▶ ${moviePct > 0 && moviePct < 92 ? `Resume · ${moviePct}%` : 'Play'}</button>` : ''}
+          ${t.type === 'movie' && hasService() && ck.dlStart ? `<button class="ghost" id="d-download">⬇ Download</button>` : ''}
           <button class="ghost hidden" id="d-trailer">🎬 Trailer</button>
           <button class="ghost" id="d-list"></button>
           <button class="ghost" id="d-watched"></button>
@@ -622,7 +623,13 @@ async function detail(t) {
     $('d-watched').onclick = () => { if (S.guest) return gate('Watch history syncs across your devices with a free account.'); toggleWatchedTitle(tt); paintBtns(); };
     paintBtns();
     if (!hasService()) whereToWatch(imdb, t.type);   // tracker shell: providers, not streams
-    if (t.type === 'movie') { if (hasService()) $('d-play').onclick = () => pickStream(imdb, meta.name); }
+    if (t.type === 'movie') {
+        if (hasService()) $('d-play').onclick = () => pickStream(imdb, meta.name);
+        // Download entry point right on the page (AJ: "no download option in desktop") —
+        // a movie poster auto-plays the first stream, so the per-stream ⬇ was never seen.
+        // This resolves the best stream, then runs the same lean-pick download flow.
+        if (hasService() && ck.dlStart) $('d-download')?.addEventListener('click', () => downloadFor(imdb, meta.name, meta));
+    }
     else seasons(meta);
 }
 // where-to-watch (guest / no-service accounts): TMDB providers, same idea as the TV app
@@ -676,11 +683,16 @@ function seasons(meta) {
                 </div>
                 <div class="et"><b>${e.episode}. ${e.name || ''}</b><span>${(e.released || '').slice(0, 10)}${aired ? '' : ' · not aired'}</span>
                 ${e.overview && !(doBlur && !seen) ? `<div class="ep-desc">${e.overview}</div>` : ''}</div>
+                ${aired && hasService() && ck.dlStart ? `<button class="ep-eye ep-dl" title="Download for offline">⬇</button>` : ''}
                 <button class="ep-eye" title="${seen ? 'Watched — click to unmark' : 'Mark episode watched'}">${seen ? '✓' : '👁'}</button>`;
             // Stremio-style: the episode click opens its own PAGE (facts + streams filling
             // in) — never a toast-and-wait, never streams dumped at the page bottom
             el.onclick = () => aired && episodePage(cur.t, meta, e);
-            el.querySelector('.ep-eye').onclick = (ev) => {
+            el.querySelector('.ep-dl')?.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                downloadFor(key, `${meta.name} S${e.season}E${e.episode}`, meta);
+            });
+            el.querySelector('.ep-eye:not(.ep-dl)').onclick = (ev) => {
                 ev.stopPropagation();
                 if (S.guest) return gate('Track watched episodes with a free account.');
                 toggleEpWatched(key); paint(sn);
@@ -906,6 +918,20 @@ async function pickStream(sid, label, autoFirst = false) {
 // filters on it — grandma's profile never sees (or deletes) yours on a shared machine
 const profKey = () => (S.email || 'guest') + '|' + (S.pid || '');
 const dlKeyOf = (sid) => (profKey() + '_' + String(sid || '')).replace(/[^\w]+/g, '_');
+// Page-level Download button (movie page / episode row): resolve the stream list first,
+// then hand the best one to the same lean-pick flow the per-stream ⬇ uses. cur.meta must
+// point at the title being downloaded so posters/names on the Downloads page are right.
+async function downloadFor(sid, label, meta) {
+    if (!hasService() || !ck.dlStart) return;
+    if (meta) cur = { ...(cur || {}), meta, imdb: sid.split(':')[0] };
+    toast('Finding a stream…');
+    const base = S.addons[0].url.replace(/\/$/, '');
+    const type = sid.includes(':') ? 'series' : 'movie';
+    const d = await j(`${base}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
+    const st = (d?.streams || [])[0];
+    if (!st) { toast('No stream to download yet — try again shortly'); return; }
+    startDownload(st, sid, label);
+}
 async function startDownload(st, sid, label) {
     const imdb = sid.split(':')[0]; const [, s, e] = sid.split(':');
     // LEAN PICK (AJ Sep 14, "Black Panther is 7.9GB"): the visible list is quality-ranked
