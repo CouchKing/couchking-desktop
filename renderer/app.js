@@ -1457,6 +1457,12 @@ function addonsPage() {
             body.appendChild(b);
             return;
         }
+        // official built-ins (AJ Sep 13: "I don't see OpenSubtitles or Cinemeta under
+        // official addons") — these power every install and can't be removed, same as
+        // Stremio lists its preinstalled pair
+        body.appendChild(sectionText('OFFICIAL — BUILT IN'));
+        body.appendChild(settingRow('Cinemeta', 'Movie & show info · built in', null));
+        body.appendChild(settingRow('OpenSubtitles v3', 'Subtitles · built in', null));
         body.appendChild(sectionText('YOUR ADDONS'));
         if (!S.addons.length) {
             const p = document.createElement('p'); p.className = 'muted';
