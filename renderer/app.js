@@ -538,12 +538,29 @@ async function detail(t) {
         <div class="d-desc">${meta.description || ''}</div>
         <div class="d-btns">
           ${t.type === 'movie' && hasService() ? `<button class="primary" id="d-play">▶ ${moviePct > 0 && moviePct < 92 ? `Resume · ${moviePct}%` : 'Play'}</button>` : ''}
+          <button class="ghost hidden" id="d-trailer">🎬 Trailer</button>
           <button class="ghost" id="d-list"></button>
           <button class="ghost" id="d-watched"></button>
         </div>
+        <div id="d-cast" class="cast-row"></div>
         <div id="d-wtw" class="wtw"></div>
         </div></div>
         <div id="d-eps"></div><div id="d-streams" class="streams"></div>`;
+    // trailer (AJ Sep 13: web had no trailer option) — plays in an in-app overlay
+    const ytId = meta.trailers?.[0]?.source || meta.trailerStreams?.[0]?.ytId || null;
+    if (ytId) { $('d-trailer').classList.remove('hidden'); $('d-trailer').onclick = () => playTrailerWeb(ytId); }
+    // clickable cast (AJ Sep 13) — name chips open the same person page search results use
+    const castHolder = $('d-cast');
+    for (const nm of (meta.cast || []).slice(0, 10)) {
+        const c = document.createElement('span'); c.className = 'chip chip-cast'; c.textContent = nm;
+        c.onclick = async () => {
+            const r = await j(`https://api.themoviedb.org/3/search/person?query=${encodeURIComponent(nm)}&api_key=${TMDB}`);
+            const hit = r?.results?.[0];
+            if (hit) personPage({ id: hit.id, name: hit.name, role: 'Actor',
+                photo: hit.profile_path ? `https://image.tmdb.org/t/p/w185${hit.profile_path}` : null });
+        };
+        castHolder.appendChild(c);
+    }
     const tt = { id: imdb, type: t.type, name: meta.name, poster: meta.poster || t.poster || '' };
     const paintBtns = () => {
         const st = pstate();
@@ -749,8 +766,7 @@ async function episodePage(t, meta, ep, autoplay = false) {
     const holder = $('ep-streams');
     holder.innerHTML = '';
     for (const s of streams) {
-        const el = document.createElement('div'); el.className = 'stream';
-        el.innerHTML = `<b>${(s.name || '').replace(/\n/g, ' ')}</b>${(s.description || s.title || '').split('\n')[0]}`;
+        const el = streamEl(s);
         el.onclick = () => playEpisodeStream(s, meta, ep, sid, label);
         holder.appendChild(el);
     }
@@ -768,6 +784,37 @@ function playEpisodeStream(s, meta, ep, sid, label) {
 }
 
 // ---------- streams + play ----------
+/** In-app trailer overlay (AJ Sep 13: "why not in our player, in our app") — a YouTube
+ *  embed runs from the viewer's own IP, so no bot-wall; ESC or ✕ closes. */
+function playTrailerWeb(ytId) {
+    const cover = document.createElement('div');
+    cover.id = 'trailer-cover';
+    cover.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(5,4,12,.96);display:flex;align-items:center;justify-content:center';
+    cover.innerHTML = `<iframe width="80%" style="aspect-ratio:16/9;border:0;border-radius:12px"
+        src="https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&rel=0" allow="autoplay; fullscreen" allowfullscreen></iframe>
+        <button style="position:absolute;top:18px;right:22px;background:#2a2545;color:#fff;border:none;border-radius:999px;padding:.5rem .9rem;cursor:pointer;font-size:1rem">✕ Close</button>`;
+    const close = () => { cover.remove(); document.removeEventListener('keydown', esc); };
+    const esc = (e) => { if (e.key === 'Escape') close(); };
+    cover.querySelector('button').onclick = close;
+    cover.onclick = (e) => { if (e.target === cover) close(); };
+    document.addEventListener('keydown', esc);
+    document.body.appendChild(cover);
+}
+
+/** One stream row, prettier (AJ Sep 13 "make the streams look better"): source name,
+ *  quality/flavor as chips, episode line under it, ⏳ notes highlighted. */
+function streamEl(st) {
+    const el = document.createElement('div'); el.className = 'stream';
+    const parts = String(st.name || '').split('|').map(x => x.trim()).filter(Boolean);
+    const src = parts.shift() || 'Stream';
+    const lines = String(st.description || st.title || '').split('\n');
+    el.innerHTML = `<div class="stream-top"><b>${src}</b>${parts.map(c =>
+            `<span class="chip chip-${c.toLowerCase().replace(/[^a-z0-9]/g, '')}">${c}</span>`).join('')}</div>
+        <div class="stream-title">${lines[0] || ''}</div>
+        ${lines[1] ? `<div class="stream-note">${lines[1]}</div>` : ''}`;
+    return el;
+}
+
 async function pickStream(sid, label, autoFirst = false) {
     if (!hasService()) return;   // tracker shell: no stream fetches without a service
     const holder = $('d-streams');
@@ -787,8 +834,7 @@ async function pickStream(sid, label, autoFirst = false) {
     if (autoFirst && streams[0]) { start(streams[0]); return; }
     holder.innerHTML = '<div class="row-label">Streams</div>';
     for (const st of streams) {
-        const el = document.createElement('div'); el.className = 'stream';
-        el.innerHTML = `<b>${(st.name || '').replace(/\n/g, ' ')}</b>${(st.description || st.title || '').split('\n')[0]}`;
+        const el = streamEl(st);
         el.onclick = () => start(st);
         holder.appendChild(el);
     }
@@ -1403,10 +1449,39 @@ function addonsPage() {
         body.appendChild(sectionText('YOUR ADDONS'));
         if (!S.addons.length) {
             const p = document.createElement('p'); p.className = 'muted';
-            p.textContent = 'No addons yet — the addon assigned to your account installs automatically once you’re enabled.';
+            p.textContent = 'No addons yet — the addon assigned to your account installs automatically once you’re enabled, or add one below.';
             body.appendChild(p);
         }
-        for (const a of S.addons) body.appendChild(settingRow(a.name || 'Addon', 'Connected', null));
+        // add/remove parity with the Firestick/mobile app (AJ Sep 13: "can't add addons on
+        // there — I want them the same"). The list lives in the synced account state, so an
+        // addon added here appears on every signed-in device.
+        S.addons.forEach((a, ix) => {
+            const row = settingRow(a.name || 'Addon', ix === 0 ? 'Connected · primary' : 'Remove', ix === 0 ? null : () => {
+                S.addons.splice(ix, 1);
+                const st = pstate(); st.addons = S.addons; pushAccount();
+                addonsPage();
+            });
+            body.appendChild(row);
+        });
+        body.appendChild(sectionText('ADD AN ADDON'));
+        const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;gap:.5rem;max-width:560px';
+        const inp = document.createElement('input'); inp.placeholder = 'Addon or manifest URL…';
+        inp.style.cssText = 'flex:1';
+        const btn = document.createElement('button'); btn.className = 'primary'; btn.textContent = 'Add';
+        btn.onclick = async () => {
+            let u = inp.value.trim(); if (!u) return;
+            if (!/^https?:\/\//.test(u)) u = 'https://' + u;
+            u = u.replace(/\/manifest\.json$/, '').replace(/\/$/, '');
+            btn.textContent = 'Checking…';
+            const man = await j(`${u}/manifest.json`, { timeoutMs: 10000 });
+            btn.textContent = 'Add';
+            if (!man?.id) { inp.value = ''; inp.placeholder = 'That URL has no addon manifest — check it'; return; }
+            if (S.addons.some(x => x.url === u)) { inp.value = ''; inp.placeholder = 'Already added'; return; }
+            S.addons.push({ url: u, name: man.name || 'Addon' });
+            const st = pstate(); st.addons = S.addons; pushAccount();
+            addonsPage();
+        };
+        wrap.append(inp, btn); body.appendChild(wrap);
     });
 }
 function aboutPage() {

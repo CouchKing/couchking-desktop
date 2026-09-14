@@ -278,3 +278,15 @@ select:focus, select:hover { border-color:var(--accent); }
 /* sign-in prompt overlay (guest tries to play / save) */
 #gate { position:fixed; inset:0; background:#000B; display:flex; align-items:center; justify-content:center; z-index:90; }
 #gate .gate-card { background:var(--card); border-radius:16px; padding:1.6rem; width:340px; text-align:center; display:flex; flex-direction:column; gap:.8rem; }
+
+/* Sep 13: prettier stream rows + cast chips (AJ) */
+.stream-top { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.stream-title { color:#9aa; font-size:.85rem; margin-top:.2rem; }
+.stream-note { color:var(--accent); font-size:.85rem; margin-top:.15rem; }
+.chip { background:#2a2545; border-radius:999px; padding:.12rem .6rem; font-size:.78rem; }
+.chip-dub { background:rgba(245,197,24,.22); color:var(--accent); font-weight:700; }
+.chip-sub { background:rgba(120,160,255,.18); color:#9db7ff; font-weight:700; }
+.chip-1080p, .chip-720p, .chip-cam { font-weight:600; }
+.cast-row { display:flex; gap:.45rem; flex-wrap:wrap; margin:.5rem 0; }
+.chip-cast { cursor:pointer; }
+.chip-cast:hover { background:#3a3560; }
