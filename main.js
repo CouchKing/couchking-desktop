@@ -135,14 +135,16 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, su
         if (sub && sub.url) args.push('--sub-file=' + sub.url);
     args.push(url);
     const bin = ensureRunnableMpv(mpvBinary());
-    try { mpvProc = spawn(bin, args, { stdio: 'ignore' }); }
+    let errTail = '';
+    try { mpvProc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] }); }
     catch (e) { return { ok: false, error: 'mpv missing: ' + e }; }
-    // instant-death detector: if mpv dies within 2s having played nothing, tell the
-    // renderer WHY instead of silently doing nothing (macOS kill / broken binary)
+    mpvProc.stderr?.on('data', (d) => { errTail = (errTail + d.toString()).slice(-1500); });
+    // instant-death detector → ship the REAL reason (exit code/signal + stderr) to the
+    // renderer, which beacons it home — one failed play IS the diagnosis (AJ Sep 13)
     const spawnedAt = Date.now();
-    mpvProc.once('exit', (code) => {
+    mpvProc.once('exit', (code, signal) => {
         if (Date.now() - spawnedAt < 2000 && lastDur === 0)
-            win?.webContents.send('mpv-dead-instant', { code });
+            win?.webContents.send('mpv-dead-instant', { code, signal, err: errTail, bin });
     });
     mpvProc.on('error', () => { win?.webContents.send('mpv-exit', { pos: lastPos, dur: lastDur, error: 'mpv failed to start' }); mpvProc = null; });
     mpvProc.on('exit', () => { win?.webContents.send('mpv-exit', { pos: lastPos, dur: lastDur }); mpvProc = null; });

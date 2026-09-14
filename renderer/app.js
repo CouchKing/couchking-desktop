@@ -881,7 +881,12 @@ async function play(url, label, sid, subs = null) {
         hasNext: !!(next && hasService()), autonext: PREF('autonext', true),
         nextLabel: next ? `${cur?.meta?.name || ''} S${next.season}E${next.episode}${next.name ? ' — ' + next.name : ''}` : '' });
 }
-ck.onMpvDead?.(() => {
+ck.onMpvDead?.((d) => {
+    // phone-home the real failure so it can be fixed without the user doing anything
+    try {
+        j(`${SERVICE}/tvapp/diag`, { method: 'POST', body: { email: S.email, token: S.token,
+            text: `desktop mpv died: code=${d?.code} sig=${d?.signal} bin=${(d?.bin || '').split('/').slice(-4).join('/')} err=${(d?.err || '').slice(-600)}` } });
+    } catch {}
     // mpv died instantly (macOS killed the binary / broken install) — say so and offer
     // the in-window fallback instead of silently doing nothing (AJ Sep 13, Mac)
     const n = document.createElement('div');
