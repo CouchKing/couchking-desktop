@@ -1,5 +1,9 @@
 name: Build installers
 on: { push: { branches: [master, main] }, workflow_dispatch: {} }
+# Installers ship as RELEASE ASSETS, not workflow artifacts — the artifact storage quota
+# filled up Sep 14 (every 0.9.x upload counted against it even at 2-day retention) and both
+# jobs started failing at the upload step with the builds themselves green.
+permissions: { contents: write }
 jobs:
   win:
     runs-on: windows-latest
@@ -24,13 +28,13 @@ jobs:
           Remove-Item -Recurse -Force mpvtmp, mpv.7z
       # ONE installer with x64 + arm64 inside — it auto-installs the right one
       - run: npx electron-builder --win nsis --x64 --arm64 --publish never
-      - uses: actions/upload-artifact@v4
-        with:
-          name: CouchKing-Windows
-          path: |
-            dist/*.exe
-            dist/latest.yml
-          retention-days: 2   # installers re-host on couchking within minutes
+      - name: Upload to release
+        shell: bash
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          V=$(node -p "require('./package.json').version")
+          gh release create "v$V" --title "v$V" --notes "auto-build" || true
+          gh release upload "v$V" dist/*.exe dist/latest.yml --clobber
   mac:
     runs-on: macos-latest
     steps:
@@ -61,8 +65,9 @@ jobs:
             rm -rf mpvtmp-$arch mpv-$arch.zip
           done
       - run: npx electron-builder --mac dmg --universal --publish never
-      - uses: actions/upload-artifact@v4
-        with:
-          name: CouchKing-macOS
-          path: dist/*.dmg
-          retention-days: 2   # installers re-host on couchking within minutes
+      - name: Upload to release
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          V=$(node -p "require('./package.json').version")
+          gh release create "v$V" --title "v$V" --notes "auto-build" || true
+          gh release upload "v$V" dist/*.dmg --clobber
