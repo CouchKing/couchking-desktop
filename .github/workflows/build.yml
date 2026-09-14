@@ -25,6 +25,7 @@ jobs:
       - run: npx electron-builder --win nsis --x64 --arm64 --publish never
       - uses: actions/upload-artifact@v4
         with: { name: CouchKing-Windows, path: dist/*.exe }
+          retention-days: 2   # installers are re-hosted on couchking within minutes — no need to pay GitHub storage for 90 days
   mac:
     runs-on: macos-latest
     steps:
@@ -51,3 +52,4 @@ jobs:
       - run: npx electron-builder --mac dmg --universal --publish never
       - uses: actions/upload-artifact@v4
         with: { name: CouchKing-macOS, path: dist/*.dmg }
+          retention-days: 2   # installers are re-hosted on couchking within minutes — no need to pay GitHub storage for 90 days
