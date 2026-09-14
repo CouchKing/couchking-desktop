@@ -24,8 +24,10 @@ jobs:
       # ONE installer with x64 + arm64 inside — it auto-installs the right one
       - run: npx electron-builder --win nsis --x64 --arm64 --publish never
       - uses: actions/upload-artifact@v4
-        with: { name: CouchKing-Windows, path: dist/*.exe }
-          retention-days: 2   # installers are re-hosted on couchking within minutes — no need to pay GitHub storage for 90 days
+        with:
+          name: CouchKing-Windows
+          path: dist/*.exe
+          retention-days: 2   # installers re-host on couchking within minutes
   mac:
     runs-on: macos-latest
     steps:
@@ -47,9 +49,14 @@ jobs:
             unzip -q mpv-$arch.zip -d mpvtmp-$arch
             mv mpvtmp-$arch/mpv/mpv.app mpv/mac-$arch/mpv.app
             chmod +x mpv/mac-$arch/mpv.app/Contents/MacOS/mpv
+            # ad-hoc sign the whole nested app — macOS (esp. Apple Silicon) SIGKILLs
+            # unsigned helper binaries on spawn: the "flash for 0.01s then nothing" bug
+            codesign --force --deep --sign - mpv/mac-$arch/mpv.app
             rm -rf mpvtmp-$arch mpv-$arch.zip
           done
       - run: npx electron-builder --mac dmg --universal --publish never
       - uses: actions/upload-artifact@v4
-        with: { name: CouchKing-macOS, path: dist/*.dmg }
-          retention-days: 2   # installers are re-hosted on couchking within minutes — no need to pay GitHub storage for 90 days
+        with:
+          name: CouchKing-macOS
+          path: dist/*.dmg
+          retention-days: 2   # installers re-host on couchking within minutes

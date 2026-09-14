@@ -881,6 +881,17 @@ async function play(url, label, sid) {
         hasNext: !!(next && hasService()), autonext: PREF('autonext', true),
         nextLabel: next ? `${cur?.meta?.name || ''} S${next.season}E${next.episode}${next.name ? ' — ' + next.name : ''}` : '' });
 }
+ck.onMpvDead?.(() => {
+    // mpv died instantly (macOS killed the binary / broken install) — say so and offer
+    // the in-window fallback instead of silently doing nothing (AJ Sep 13, Mac)
+    const n = document.createElement('div');
+    n.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;' +
+        'background:#2a1e1e;color:#ffb3b3;border:1px solid #663;border-radius:10px;padding:.8rem 1.2rem;max-width:640px;text-align:center';
+    n.innerHTML = 'The video engine was blocked by macOS. <b>Update to the latest version from couchking.app/downloads</b> — it fixes this. (Playback also works at couchking.app/app meanwhile.)';
+    document.body.appendChild(n);
+    setTimeout(() => n.remove(), 12000);
+});
+
 ck.onMpvPos(({ pos, dur }) => {
     if (!playing) return;
     playing.pos = pos; playing.dur = dur;

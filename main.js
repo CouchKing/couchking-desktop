@@ -5,7 +5,7 @@
 // MKV/H.264/HEVC/DDP file exactly like the TV app's Media3+ffmpeg stack — no browser
 // codec roulette. mpv is controlled over its JSON IPC socket for progress beacons.
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -66,6 +66,21 @@ function mpvBinary() {
     return 'mpv';   // dev fallback: system mpv on PATH
 }
 
+// macOS SIGKILLs quarantined/unsigned helper binaries on spawn — the "flash for 0.01s
+// then nothing" bug (AJ Sep 13). Once per launch: strip the quarantine flag the dmg
+// download left on the bundled mpv and re-apply an ad-hoc signature. Best-effort — a
+// properly signed build (0.9.6+) doesn't need it, older installs self-repair.
+let mpvRepaired = false;
+function repairMpvMac(bin) {
+    if (process.platform !== 'darwin' || mpvRepaired || bin === 'mpv') return;
+    mpvRepaired = true;
+    try {
+        const appDir = bin.replace(/\/Contents\/MacOS\/mpv$/, '');
+        execSync(`xattr -dr com.apple.quarantine "${appDir}" 2>/dev/null || true`);
+        execSync(`codesign --force --deep --sign - "${appDir}" 2>/dev/null || true`);
+    } catch {}
+}
+
 function stopMpv() {
     try { mpvSock?.destroy(); } catch {}
     mpvSock = null;
@@ -98,8 +113,17 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, su
     ];
     if (startSec > 5) args.push('--start=' + Math.floor(startSec));
     args.push(url);
-    try { mpvProc = spawn(mpvBinary(), args, { stdio: 'ignore' }); }
+    const bin = mpvBinary();
+    repairMpvMac(bin);
+    try { mpvProc = spawn(bin, args, { stdio: 'ignore' }); }
     catch (e) { return { ok: false, error: 'mpv missing: ' + e }; }
+    // instant-death detector: if mpv dies within 2s having played nothing, tell the
+    // renderer WHY instead of silently doing nothing (macOS kill / broken binary)
+    const spawnedAt = Date.now();
+    mpvProc.once('exit', (code) => {
+        if (Date.now() - spawnedAt < 2000 && lastDur === 0)
+            win?.webContents.send('mpv-dead-instant', { code });
+    });
     mpvProc.on('error', () => { win?.webContents.send('mpv-exit', { pos: lastPos, dur: lastDur, error: 'mpv failed to start' }); mpvProc = null; });
     mpvProc.on('exit', () => { win?.webContents.send('mpv-exit', { pos: lastPos, dur: lastDur }); mpvProc = null; });
 
