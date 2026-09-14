@@ -151,8 +151,17 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, su
         '--sub-pos=' + (subPos === 2 ? 75 : subPos === 1 ? 90 : 100),
         '--sub-border-size=' + (subOutline ? 3 : 0),
         ...(subBg ? ['--sub-back-color=#B3000000'] : []),
-        '--osc=yes', '--osd-bar=yes'
+        '--osc=yes', '--osd-bar=yes',
+        '--no-ytdl'   // direct media only — stops the yt-dlp subprocess noise/latency
     ];
+    // TLS roots for the portable engine (Sep 13, THE Mac fix): bundled mpv has no CA
+    // store, so https verification failed on every stream. Point it at our shipped
+    // Mozilla bundle; if a build lacks it, skip verification rather than fail closed.
+    const caCandidates = process.platform === 'win32'
+        ? [path.join(path.dirname(mpvBinary()), 'cacert.pem')]
+        : [path.resolve(mpvBinary(), '../../../../cacert.pem')];
+    const ca = caCandidates.find(c => { try { return fs.existsSync(c); } catch { return false; } });
+    args.push(ca ? '--tls-ca-file=' + ca : '--tls-verify=no');
     if (startSec > 5) args.push('--start=' + Math.floor(startSec));
     // ranked OpenSubtitles from the addon (release-matched = best sync) — same list the
     // Firestick gets; they show up in mpv's subtitle cycle (j key / OSC menu). Before

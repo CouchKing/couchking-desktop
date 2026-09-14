@@ -20,6 +20,7 @@ jobs:
           7z x mpv.7z -ompvtmp | Out-Null
           New-Item -ItemType Directory -Force mpv/win | Out-Null
           Copy-Item mpvtmp/mpv.exe mpv/win/mpv.exe
+          Invoke-WebRequest https://curl.se/ca/cacert.pem -OutFile mpv/win/cacert.pem
           Remove-Item -Recurse -Force mpvtmp, mpv.7z
       # ONE installer with x64 + arm64 inside — it auto-installs the right one
       - run: npx electron-builder --win nsis --x64 --arm64 --publish never
@@ -54,6 +55,9 @@ jobs:
             # ad-hoc sign the whole nested app — macOS (esp. Apple Silicon) SIGKILLs
             # unsigned helper binaries on spawn: the "flash for 0.01s then nothing" bug
             codesign --force --deep --sign - mpv/mac-$arch/mpv.app
+            # CA bundle: the portable mpv has NO trusted roots — every https stream failed
+            # "certificate verify failed" (the entire Mac playback saga, solved Sep 13)
+            curl -sL https://curl.se/ca/cacert.pem -o mpv/mac-$arch/cacert.pem
             rm -rf mpvtmp-$arch mpv-$arch.zip
           done
       - run: npx electron-builder --mac dmg --universal --publish never
