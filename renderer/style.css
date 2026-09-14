@@ -249,12 +249,31 @@ select:focus, select:hover { border-color:var(--accent); }
 #web-player .wp-hint { position:absolute; left:0; right:0; bottom:88px; text-align:center; color:#ff9a7a;
                        font-size:.9rem; text-shadow:0 1px 4px #000; }
 #web-player .wp-btn.on { background:var(--accent); }
+/* CouchKing panel — matches the TV/phone app pickers (dark card, purple current + ✓) */
 #web-player .wp-menu { position:absolute; bottom:150px; left:50%; transform:translateX(-50%);
-                       background:#16132ADD; border:1px solid #37315C; border-radius:14px; padding:.6rem;
-                       display:flex; flex-direction:column; gap:.3rem; max-height:50vh; overflow-y:auto; min-width:180px; }
-#web-player .wp-menu button { background:transparent; padding:.5rem .9rem; text-align:left; border-radius:8px; }
+                       background:var(--card); border:1px solid #37315C; border-radius:16px; padding:.7rem;
+                       display:flex; flex-direction:column; gap:.2rem; max-height:52vh; overflow-y:auto;
+                       min-width:230px; box-shadow:0 12px 40px #000C; }
+#web-player .wp-mtitle { color:var(--muted); font-size:.72rem; font-weight:800; text-transform:uppercase;
+                         letter-spacing:.08em; padding:.2rem .9rem .5rem; }
+#web-player .wp-menu button { background:transparent; padding:.55rem .9rem; text-align:left; border-radius:10px;
+                              font-size:.95rem; }
 #web-player .wp-menu button:hover { background:#332D55; }
-#web-player .wp-menu button.on { background:var(--accent); }
+#web-player .wp-menu button.on { background:transparent; color:var(--accent); font-weight:800; }
+#web-player .wp-menu button.on:hover { background:#332D55; }
+
+/* CouchKing confirm card (downloads, deletes) — replaces the OS confirm() popup */
+.ck-ask { position:fixed; inset:0; background:#000A; z-index:400; display:flex;
+          align-items:center; justify-content:center; }
+.ck-ask-card { background:var(--card); border:1px solid #37315C; border-radius:16px;
+               padding:1.3rem 1.4rem 1rem; width:min(86vw, 400px); box-shadow:0 12px 40px #000C; }
+.ck-ask-card h3 { margin:0; font-size:1.1rem; }
+.ck-ask-card p { color:var(--muted); margin:.55rem 0 0; font-size:.95rem; }
+.ck-ask-btns { display:flex; justify-content:flex-end; gap:.6rem; margin-top:1.2rem; }
+.ck-ask-btns .ghost { background:transparent; color:var(--muted); padding:.55rem 1rem; }
+.ck-ask-btns .ghost:hover { background:#332D55; color:var(--fg); }
+.ck-ask-btns .primary { padding:.55rem 1.2rem; font-weight:800; }
+.ck-ask-btns .primary.danger { background:#E5484D; }
 
 /* where-to-watch providers (guest / no-service accounts — neutral tracker shell) */
 .wtw { margin-top:1.1rem; }

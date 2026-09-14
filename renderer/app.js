@@ -29,6 +29,28 @@ function toast(msg) {
     setTimeout(() => t.remove(), 2200);
 }
 
+// CouchKing confirm panel — replaces the OS confirm() popups (downloads, deletes) with
+// the app's own card: dark rounded panel, purple filled action (red for deletes).
+function ckAsk(title, line, positive = 'OK', danger = false) {
+    return new Promise((resolve) => {
+        const wrap = document.createElement('div'); wrap.className = 'ck-ask';
+        const card = document.createElement('div'); card.className = 'ck-ask-card';
+        const h = document.createElement('h3'); h.textContent = title; card.appendChild(h);
+        if (line) { const p = document.createElement('p'); p.textContent = line; card.appendChild(p); }
+        const btns = document.createElement('div'); btns.className = 'ck-ask-btns';
+        const done = (val) => { wrap.remove(); document.removeEventListener('keydown', esc, true); resolve(val); };
+        const esc = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+        const no = document.createElement('button'); no.className = 'ghost'; no.textContent = 'Cancel';
+        no.onclick = () => done(false);
+        const ok = document.createElement('button'); ok.className = 'primary' + (danger ? ' danger' : '');
+        ok.textContent = positive; ok.onclick = () => done(true);
+        btns.appendChild(no); btns.appendChild(ok); card.appendChild(btns);
+        wrap.appendChild(card); wrap.onclick = (e) => { if (e.target === wrap) done(false); };
+        document.addEventListener('keydown', esc, true);
+        document.body.appendChild(wrap); ok.focus();
+    });
+}
+
 // ---------- auth ----------
 async function auth(mode) {
     $('auth-error').textContent = '';
@@ -894,7 +916,7 @@ async function startDownload(st, sid, label) {
     try {
         const d = await j(`${SERVICE}/dlpick/${S.subKey}?i=${imdb}&s=${s || ''}&e=${e || ''}&t=${encodeURIComponent(cur?.meta?.name || label)}&u=${encodeURIComponent(S.useg)}`);
         for (const o of (d?.options || [])) {
-            if (confirm(`Download ${o.q} — ${gb(+o.bytes || 0)}?`)) {
+            if (await ckAsk(`Download ${cur?.meta?.name || label}?`, `${o.q} — ${gb(+o.bytes || 0)}`, 'Download')) {
                 dlUrl = o.url; picked = true;
                 if (d.subtitles?.length) dlSubs = d.subtitles;
                 break;
@@ -905,7 +927,8 @@ async function startDownload(st, sid, label) {
     // no lean options (rare/offline titles): confirm the clicked stream's real size instead
     if (!picked && ck.dlSize) {
         const { bytes } = await ck.dlSize(st.url);
-        if (bytes > 0 && !confirm(`Download ${gb(bytes)}${bytes > 5e9 ? ' — that’s a big file' : ''}?`)) return;
+        if (bytes > 0 && !(await ckAsk(`Download ${cur?.meta?.name || label}?`,
+            gb(bytes) + (bytes > 5e9 ? ' — that’s a big file' : ''), 'Download'))) return;
     }
     // capture the learned intro/credits windows NOW — offline play can't ask later
     let introFromMs = -1, introToMs = -1, creditsMs = 0;
@@ -1400,8 +1423,8 @@ function profileManager() {
             if (profs.length > 1) {
                 const del = document.createElement('button'); del.className = 'ghost small'; del.textContent = '🗑';
                 del.title = 'Delete profile';
-                del.onclick = () => {
-                    if (!confirm(`Delete profile "${p.name}"? Its watch history goes with it.`)) return;
+                del.onclick = async () => {
+                    if (!(await ckAsk(`Delete profile "${p.name}"?`, 'Its watch history goes with it.', 'Delete', true))) return;
                     S.state.profiles = profs.filter(x => x.id !== p.id);
                     if (S.state.states) delete S.state.states[p.id];
                     // tombstone so the delete sticks across devices (server honors it on merge)
@@ -1533,7 +1556,8 @@ function renderSettings() {
         }));
         body.appendChild(settingRow('Sign out', '', () => { localStorage.removeItem('ck'); location.reload(); }));
         body.appendChild(settingRow('Delete account', '', async () => {
-            if (!confirm('Delete account?\n\nThis permanently deletes your account and synced library on the server.')) return;
+            if (!(await ckAsk('Delete account?',
+                'This permanently deletes your account and synced library on the server.', 'Delete', true))) return;
             const r = await j(`${SERVICE}/tvapp/delete`, { method: 'POST', body: { email: S.email, token: S.token } });
             if (!r?.ok) { toast("Couldn't delete — check your connection"); return; }
             localStorage.removeItem('ck'); location.reload();

@@ -104,8 +104,25 @@
             const v = player.querySelector('video');
             const ui = player.querySelector('.wp-ui');
             const src = (t) => localFile ? localFile : `${SVC}/webplay?u=${u}&t=${Math.floor(t)}`;
+            // /webplay stream-copies video, so after a seek it really starts at the
+            // KEYFRAME before the asked second — up to several seconds early. Everything
+            // here (cues, timeline, reported resume) assumed start == asked second, which
+            // is why subs drifted after seeks while phones (exact-seek, original file)
+            // stayed accurate. The server now reports the real start; snap offset to it.
+            let seekSeq = 0;
+            const syncStart = (t) => {
+                if (localFile || !state || t <= 0) return;
+                const seq = ++seekSeq;
+                fetch(`${SVC}/webplay/start?u=${u}&t=${Math.floor(t)}`)
+                    .then(r => r.json()).then(d => {
+                        if (!state || seq !== seekSeq) return;
+                        const real = +d.start;
+                        if (isFinite(real) && real >= 0 && Math.abs(real - t) < 30) state.offset = real;
+                    }).catch(() => {});
+            };
             v.src = src(startSec);
             if (localFile && startSec > 0) v.currentTime = startSec;
+            syncStart(startSec);
             // silent mpv fallback (desktop): if the in-window engine can't produce a frame
             // (codec the probe missed, remux hiccup), hand the SAME opts to mpv — the
             // viewer just sees playback start, never an error to deal with
@@ -128,18 +145,27 @@
                 cueEl.style.bottom = ({ 0: '9vh', 1: '16vh', 2: '24vh' })[subPos] || '9vh';
             };
             styleCue();
+            // entities show up literally in a hand-rendered cue (&amp;#39; etc) — decode;
+            // strip tags again AFTER decoding so encoded markup (&lt;i&gt;) drops too
+            const unent = (s) => s
+                .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+                .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
             const parseVtt = (txt) => {
                 const cues = [];
-                const re = /(\d{2,}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{2,}):(\d{2}):(\d{2})[.,](\d{3})/;
+                // hours are OPTIONAL (MM:SS.mmm is legal VTT and common) — the old
+                // HH:MM:SS-only regex silently dropped every hourless cue
+                const re = /(?:(\d{1,3}):)?(\d{1,2}):(\d{2})[.,](\d{3})\s*-->\s*(?:(\d{1,3}):)?(\d{1,2}):(\d{2})[.,](\d{3})/;
                 for (const b of txt.replace(/\r/g, '').split(/\n\n+/)) {
                     const lines = b.split('\n');
                     const ti = lines.findIndex(l => l.includes('-->'));
                     if (ti < 0) continue;
                     const m = lines[ti].match(re);
                     if (!m) continue;
-                    const s = +m[1] * 3600 + +m[2] * 60 + +m[3] + +m[4] / 1000;
-                    const e = +m[5] * 3600 + +m[6] * 60 + +m[7] + +m[8] / 1000;
-                    const text = lines.slice(ti + 1).join('\n').replace(/<[^>]+>/g, '').trim();
+                    const s = (+m[1] || 0) * 3600 + +m[2] * 60 + +m[3] + +m[4] / 1000;
+                    const e = (+m[5] || 0) * 3600 + +m[6] * 60 + +m[7] + +m[8] / 1000;
+                    const text = unent(lines.slice(ti + 1).join('\n').replace(/<[^>]+>/g, ''))
+                        .replace(/<[^>]+>/g, '').trim();
                     if (text && e > s) cues.push({ s, e, text });
                 }
                 return cues;
@@ -168,15 +194,22 @@
                 } catch {}
             };
             const menu = player.querySelector('.wp-menu');
-            const openMenu = (items) => {
+            // CouchKing panel: section title on top, current choice purple with a ✓
+            const openMenu = (title, items) => {
                 menu.innerHTML = '';
+                const h = document.createElement('div');
+                h.className = 'wp-mtitle'; h.textContent = title;
+                menu.appendChild(h);
+                let onBtn = null;
                 for (const [label, fn, on] of items) {
                     const b = document.createElement('button');
                     b.textContent = label; b.className = on ? 'on' : '';
+                    if (on) { b.textContent += '   ✓'; onBtn = b; }
                     b.onclick = () => { menu.classList.add('hidden'); fn(); };
                     menu.appendChild(b);
                 }
                 menu.classList.remove('hidden');
+                if (onBtn) onBtn.scrollIntoView({ block: 'nearest' });
             };
             if (inlineSubs && inlineSubs.length) {
                 // offline: subtitle text was saved WITH the download — no network at all
@@ -200,7 +233,9 @@
                             if (!s.url || haveUrl.has(s.url)) continue;
                             const en = /^en/i.test(s.lang || '');
                             if (en) {
-                                if (engCount() >= 6) continue;
+                                // was capped at 6 — phones list the full feed, and AJ
+                                // noticed ("more subtitle options on my phone")
+                                if (engCount() >= 20) continue;
                                 subList.push({ url: s.url, lang: 'English ' + (engCount() + 1) });
                             } else {
                                 if (perLang.has(s.lang)) continue;
@@ -216,8 +251,8 @@
                     }).catch(() => {});
             }
             player.querySelector('.wp-subs').onclick = () => menu.classList.contains('hidden')
-                ? openMenu([['Subtitles off', () => selectSub(null), !curSub],
-                    ...subList.slice(0, 14).map(s => [s.lang || '?', () => selectSub(s), curSub === s])])
+                ? openMenu('Subtitles', [['Subtitles off', () => selectSub(null), !curSub],
+                    ...subList.map(s => [s.lang || '?', () => selectSub(s), curSub === s])])
                 : menu.classList.add('hidden');
             player.querySelector('.wp-subsize').onclick = () => {
                 sizeIx = (sizeIx + 1) % SIZES.length; styleCue();
@@ -232,15 +267,14 @@
                 const c = player.querySelector('.wp-scale'); c.textContent = FITS[fitIx][1];
                 setTimeout(() => { c.textContent = '⤢'; }, 1200);
             };
-            // Speed: same cycle idea as the TV player's Speed button
-            const SPEEDS = [1, 1.25, 1.5, 2, 0.75];
-            let spIx = 0;
-            player.querySelector('.wp-speed').onclick = () => {
-                spIx = (spIx + 1) % SPEEDS.length;
-                state.speed = SPEEDS[spIx];
-                v.playbackRate = state.speed;
-                player.querySelector('.wp-speed').textContent = SPEEDS[spIx] + '×';
-            };
+            // Speed: real menu, same options + look as the TV/player apps
+            const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+            player.querySelector('.wp-speed').onclick = () => menu.classList.contains('hidden')
+                ? openMenu('Speed', SPEEDS.map(sp => [sp === 1 ? 'Normal' : sp + '×', () => {
+                    state.speed = sp; v.playbackRate = sp;
+                    player.querySelector('.wp-speed').textContent = sp + '×';
+                }, state.speed === sp]))
+                : menu.classList.add('hidden');
             // Info: what the stream actually is (web's version of the TV player's stats)
             const infoBox = player.querySelector('.wp-infobox');
             player.querySelector('.wp-info').onclick = () => {
@@ -274,7 +308,7 @@
             const seekTo = (t) => {
                 if (!state) return;
                 t = Math.max(0, state.dur ? Math.min(t, state.dur - 5) : t);
-                state.offset = t; v.src = src(t);
+                state.offset = t; v.src = src(t); syncStart(t);
                 v.playbackRate = state.speed;
                 v.play().catch(() => {});
                 paintCue();
