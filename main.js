@@ -256,10 +256,11 @@ ipcMain.handle('dl-delete', (_e, { key }) => {
 });
 
 ipcMain.handle('dl-start', async (_e, opts) => {
-    const { sid, url, title, poster = '', kind = 'movie', showName = '', epName = '',
+    const { sid, prof = '', url, title, poster = '', kind = 'movie', showName = '', epName = '',
             season = 0, episode = 0, durSec = 0, subs = [],
             introFromMs = -1, introToMs = -1, creditsMs = 0, capGB = 30 } = opts || {};
-    const key = dlKey(sid);
+    // key carries the profile — per-profile lists, per-profile deletes (AJ Sep 14)
+    const key = dlKey(prof + '_' + sid);
     if (!key || !url) return { ok: false, error: 'bad args' };
     if (dlActive.has(key)) return { ok: false, error: 'already downloading' };
     fs.mkdirSync(DL_DIR, { recursive: true });
@@ -288,7 +289,7 @@ ipcMain.handle('dl-start', async (_e, opts) => {
             if (t && /-->/.test(t)) subTexts.push({ lang: 'English ' + (subTexts.length + 1), vtt: t });
         } catch {}
     }
-    const meta = { key, sid, title, poster, kind, showName, epName, season, episode,
+    const meta = { key, sid, prof, title, poster, kind, showName, epName, season, episode,
                    durSec, introFromMs, introToMs, creditsMs, subs: subTexts,
                    est, done: false, ts: Date.now() };
     fs.writeFileSync(dlMetaPath(key), JSON.stringify(meta));

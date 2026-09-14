@@ -880,7 +880,10 @@ async function pickStream(sid, label, autoFirst = false) {
 // ---------- OFFLINE DOWNLOADS (desktop only — ck.dlStart exists only under Electron) ----
 // AJ Sep 14 spec: easy download, easy delete, Movies + Shows grouped (show → seasons →
 // episodes), and offline play keeps EVERYTHING — subs, skip-intro, credits/up-next.
-const dlKeyOf = (sid) => String(sid || '').replace(/[^\w]+/g, '_');
+// downloads are PER ACCOUNT+PROFILE (AJ Sep 14): the key carries the profile, the list
+// filters on it — grandma's profile never sees (or deletes) yours on a shared machine
+const profKey = () => (S.email || 'guest') + '|' + (S.pid || '');
+const dlKeyOf = (sid) => (profKey() + '_' + String(sid || '')).replace(/[^\w]+/g, '_');
 async function startDownload(st, sid, label) {
     const imdb = sid.split(':')[0]; const [, s, e] = sid.split(':');
     // capture the learned intro/credits windows NOW — offline play can't ask later
@@ -892,7 +895,7 @@ async function startDownload(st, sid, label) {
             if (r.credits > 0) creditsMs = r.credits;
         }
     } catch {}
-    const res = await ck.dlStart({ sid, url: st.url, title: label, poster: cur?.meta?.poster || '',
+    const res = await ck.dlStart({ sid, prof: profKey(), url: st.url, title: label, poster: cur?.meta?.poster || '',
         kind: sid.includes(':') ? 'episode' : 'movie', showName: cur?.meta?.name || label, epName: label,
         season: +s || 0, episode: +e || 0, subs: st.subtitles || [],
         introFromMs, introToMs, creditsMs, capGB: PREF('dlcap', 30) });
@@ -902,7 +905,7 @@ const gb = (n) => (n / 1e9).toFixed(1) + ' GB';
 async function downloadsPage() {
     const body = $('downloads-body');
     if (!ck.dlList) { body.innerHTML = '<p class="muted">Downloads are a desktop-app feature.</p>'; return; }
-    const items = await ck.dlList();
+    const items = (await ck.dlList()).filter(m => (m.prof || '') === profKey());
     body.innerHTML = `<h2>Downloads</h2>
         <div class="dl-opts muted">
           <label><input type="checkbox" id="dl-autodel" ${PREF('dlautodel', false) ? 'checked' : ''}> Auto-delete watched</label>
