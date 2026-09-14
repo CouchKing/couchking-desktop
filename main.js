@@ -106,6 +106,14 @@ function stopMpv() {
 
 // Launch mpv fullscreen for a stream; report position over IPC so the renderer can
 // beacon /player/progress (cross-device resume) exactly like the TV app does on exit.
+ipcMain.handle('open-trailer', (_e, ytId) => {
+    // top-level embed page in its own window — an iframe from the app's local page has no
+    // https origin and YouTube answers "video player configuration error" (AJ Sep 13)
+    const t = new BrowserWindow({ width: 1280, height: 720, autoHideMenuBar: true,
+        backgroundColor: '#000', title: 'Trailer' });
+    t.loadURL(`https://www.youtube-nocookie.com/embed/${String(ytId).replace(/[^\w-]/g, '')}?autoplay=1&rel=0`);
+});
+
 ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, subLang = 'en',
         audioLang = 'en', subBg = false, subOutline = true, subPos = 0, subs = [] }) => {
     stopMpv();
@@ -136,9 +144,10 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, su
     args.push(url);
     const bin = ensureRunnableMpv(mpvBinary());
     let errTail = '';
-    try { mpvProc = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] }); }
+    try { mpvProc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return { ok: false, error: 'mpv missing: ' + e }; }
     mpvProc.stderr?.on('data', (d) => { errTail = (errTail + d.toString()).slice(-1500); });
+    mpvProc.stdout?.on('data', (d) => { errTail = (errTail + d.toString()).slice(-1500); });
     // instant-death detector → ship the REAL reason (exit code/signal + stderr) to the
     // renderer, which beacons it home — one failed play IS the diagnosis (AJ Sep 13)
     const spawnedAt = Date.now();

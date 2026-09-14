@@ -787,6 +787,7 @@ function playEpisodeStream(s, meta, ep, sid, label) {
 /** In-app trailer overlay (AJ Sep 13: "why not in our player, in our app") — a YouTube
  *  embed runs from the viewer's own IP, so no bot-wall; ESC or ✕ closes. */
 function playTrailerWeb(ytId) {
+    if (ck.platform !== 'web' && ck.openTrailer) { ck.openTrailer(ytId); return; }
     const cover = document.createElement('div');
     cover.id = 'trailer-cover';
     cover.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(5,4,12,.96);display:flex;align-items:center;justify-content:center';
