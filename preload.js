@@ -10,5 +10,7 @@ contextBridge.exposeInMainWorld('ck', {
     onMpvExit: (cb) => ipcRenderer.on('mpv-exit', (_e, d) => cb(d)),
     onMpvDead: (cb) => ipcRenderer.on('mpv-dead-instant', (_e, d) => cb(d)),
     openTrailer: (id) => ipcRenderer.invoke('open-trailer', id),
+    onUpdReady: (cb) => ipcRenderer.on('upd-ready', (_e, d) => cb(d)),
+    applyUpdate: () => ipcRenderer.invoke('apply-update'),
     onMpvPos: (cb) => ipcRenderer.on('mpv-pos', (_e, d) => cb(d)),
 });

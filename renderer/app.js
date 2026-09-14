@@ -995,7 +995,21 @@ $('back').onclick = () => { nav('home'); };
 // ---------- self-update pill (same yellow-button flow as the TV player app) ----------
 // Polls couchking.app/desktop/version.json on open; a newer version shows a pill that
 // opens the right installer (.exe / .dmg) in the browser — run it and you're updated.
+ck.onUpdReady?.((d) => {
+    // Windows: the update is already downloaded — one click installs + relaunches
+    document.getElementById('update-pill')?.remove();
+    const b = document.createElement('button');
+    b.id = 'update-pill';
+    b.textContent = `⟳ Restart to update${d?.version ? ' · v' + d.version : ''}`;
+    b.style.cssText = 'position:fixed;top:14px;right:16px;z-index:999;background:#f5c518;color:#1a1400;' +
+        'border:none;border-radius:999px;padding:.45rem 1rem;font-weight:700;cursor:pointer;' +
+        'box-shadow:0 2px 12px rgba(245,197,24,.4)';
+    b.onclick = () => ck.applyUpdate();
+    document.body.appendChild(b);
+});
+
 async function checkUpdate() {
+    if (ck.platform === 'win32' && ck.applyUpdate) return;  // in-app updater owns Windows now
     if (ck.platform === 'web') return;   // browser version is always current
     try {
         const cur = await ck.version();

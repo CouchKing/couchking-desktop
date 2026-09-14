@@ -106,6 +106,24 @@ function stopMpv() {
 
 // Launch mpv fullscreen for a stream; report position over IPC so the renderer can
 // beacon /player/progress (cross-device resume) exactly like the TV app does on exit.
+// ---- Windows in-app auto-update (AJ Sep 13: "can I not update in the app itself") ----
+// electron-updater + our own generic feed: downloads in the background, renderer shows a
+// "Restart to update" pill, one click installs + relaunches. Windows only — macOS refuses
+// self-update without an Apple Developer signature (pending the $99 cert).
+if (process.platform === 'win32') {
+    try {
+        const { autoUpdater } = require('electron-updater');
+        autoUpdater.autoDownload = true;
+        autoUpdater.on('update-downloaded', (info) => {
+            win?.webContents.send('upd-ready', { version: info?.version });
+        });
+        ipcMain.handle('apply-update', () => { try { autoUpdater.quitAndInstall(false, true); } catch {} });
+        app.whenReady().then(() => setTimeout(() => {
+            try { autoUpdater.checkForUpdates(); } catch {}
+        }, 4000));
+    } catch {}
+}
+
 ipcMain.handle('open-trailer', (_e, ytId) => {
     // top-level embed page in its own window — an iframe from the app's local page has no
     // https origin and YouTube answers "video player configuration error" (AJ Sep 13)

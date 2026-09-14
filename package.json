@@ -1,7 +1,7 @@
 {
   "name": "couchking-desktop",
   "productName": "CouchKing",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "description": "CouchKing for Windows and macOS",
   "main": "main.js",
   "scripts": {
@@ -12,15 +12,46 @@
   "build": {
     "appId": "app.couchking.desktop",
     "productName": "CouchKing",
-    "directories": { "output": "dist" },
-    "files": ["main.js", "preload.js", "renderer/**", "mpv/**"],
-    "asarUnpack": ["mpv/**"],
-    "win": { "target": "nsis", "icon": "build/icon.png" },
-    "nsis": { "oneClick": true, "perMachine": false },
-    "mac": { "target": ["dmg", "zip"], "icon": "build/icon.png", "category": "public.app-category.entertainment" }
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "mpv/**"
+    ],
+    "asarUnpack": [
+      "mpv/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.entertainment"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://stream.couchking.app/files/e2fdbae4/desktop-win"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
   }
 }

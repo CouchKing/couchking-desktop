@@ -26,7 +26,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: CouchKing-Windows
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            dist/latest.yml
           retention-days: 2   # installers re-host on couchking within minutes
   mac:
     runs-on: macos-latest
