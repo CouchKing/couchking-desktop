@@ -70,15 +70,31 @@ function mpvBinary() {
 // then nothing" bug (AJ Sep 13). Once per launch: strip the quarantine flag the dmg
 // download left on the bundled mpv and re-apply an ad-hoc signature. Best-effort — a
 // properly signed build (0.9.6+) doesn't need it, older installs self-repair.
-let mpvRepaired = false;
-function repairMpvMac(bin) {
-    if (process.platform !== 'darwin' || mpvRepaired || bin === 'mpv') return;
-    mpvRepaired = true;
+// v0.9.8 (AJ: "it should just work"): macOS runs freshly-downloaded apps from a READ-ONLY
+// translocation mount, so in-place repair is impossible. Instead: copy mpv.app into the
+// user's own Library (always writable), strip quarantine + ad-hoc sign THERE, run that
+// copy. Zero user action, survives updates (re-copied per app version).
+let runnableMpv = null;
+function ensureRunnableMpv(bin) {
+    if (process.platform !== 'darwin' || bin === 'mpv') return bin;
+    if (runnableMpv && fs.existsSync(runnableMpv)) return runnableMpv;
     try {
         const appDir = bin.replace(/\/Contents\/MacOS\/mpv$/, '');
-        execSync(`xattr -dr com.apple.quarantine "${appDir}" 2>/dev/null || true`);
-        execSync(`codesign --force --deep --sign - "${appDir}" 2>/dev/null || true`);
-    } catch {}
+        const destRoot = path.join(app.getPath('userData'), 'mpv');
+        const dest = path.join(destRoot, 'mpv.app');
+        const destBin = path.join(dest, 'Contents', 'MacOS', 'mpv');
+        const marker = path.join(destRoot, 'v-' + app.getVersion());
+        if (!fs.existsSync(destBin) || !fs.existsSync(marker)) {
+            fs.rmSync(destRoot, { recursive: true, force: true });
+            fs.mkdirSync(destRoot, { recursive: true });
+            execSync(`cp -R "${appDir}" "${dest}"`);
+            fs.writeFileSync(marker, '1');
+        }
+        execSync(`xattr -dr com.apple.quarantine "${dest}" 2>/dev/null || true`);
+        execSync(`codesign --force --deep --sign - "${dest}" 2>/dev/null || true`);
+        runnableMpv = destBin;
+        return destBin;
+    } catch { return bin; }
 }
 
 function stopMpv() {
@@ -118,8 +134,7 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, su
     for (const sub of (subs || []).slice(0, 5))
         if (sub && sub.url) args.push('--sub-file=' + sub.url);
     args.push(url);
-    const bin = mpvBinary();
-    repairMpvMac(bin);
+    const bin = ensureRunnableMpv(mpvBinary());
     try { mpvProc = spawn(bin, args, { stdio: 'ignore' }); }
     catch (e) { return { ok: false, error: 'mpv missing: ' + e }; }
     // instant-death detector: if mpv dies within 2s having played nothing, tell the
