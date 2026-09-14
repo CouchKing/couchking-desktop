@@ -1,6 +1,11 @@
-// Web-browser shim: defines window.ck with the SAME API the Electron preload exposes.
-// In the desktop app the preload has already created window.ck before any page script
-// runs, so this file is a no-op there — the identical renderer runs in both worlds.
+// The IN-WINDOW player + the web shim, shared by BOTH worlds (0.9.13):
+//   • web: also defines window.ck (fetch/openExternal/etc.) exactly like before
+//   • desktop: preload already made window.ck — this file adds the SAME in-window
+//     player on top, and playback ROUTES here first (AJ Sep 14: raw mpv window is
+//     "awful, hard to navigate"); mpv is a silent fallback for streams Chromium can't
+//     decode (HEVC & friends — the reason mpv exists at all) and for runtime failures.
+// app.js talks only to the unified surface at the bottom: ckPlay / ckStop / ckOnPos /
+// ckOnExit — it never needs to know which engine is on screen.
 //
 // Playback goes through the service's /webplay remux (video copied, audio → AAC the
 // browser can decode, MKV → fragmented MP4) with custom controls styled like the TV
@@ -9,11 +14,19 @@
 // Seeking reopens the stream at the new offset (fMP4 can't range-seek) — every position
 // shown/reported is offset + video.currentTime, duration from /webplay/probe.
 (function () {
-    if (window.ck) return;
+    const DESK = !!window.ck;   // preload ran first = Electron
     const b64u = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     const fmt = (s) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(s % 60).padStart(2, '0'); };
     const clock = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     let posCb = null, exitCb = null, player = null, state = null;
+    let engine = null;   // 'web' | 'mpv' | null — which engine owns the current playback
+
+    // cross-origin text fetch that works from the desktop's file:// page too (no CORS
+    // over the IPC bridge) — subtitles + the OpenSubtitles feed go through here
+    async function httpText(url) {
+        if (DESK) { const r = await window.ck.http({ url, timeoutMs: 15000 }); return r?.ok ? r.text : null; }
+        const r = await fetch(url); return r.ok ? r.text() : null;
+    }
 
     function closePlayer(fireExit, extra) {
         if (!player) return;
@@ -23,48 +36,37 @@
         // collapse the exit beacon's saved position (the resume/false-watched bug)
         const posAtExit = st ? st.offset + (v?.currentTime || 0) : 0;
         clearInterval(st?.tick);
+        clearTimeout(st?.fbTimer);
         try { v.pause(); v.removeAttribute('src'); v.load(); } catch {}
         player.remove(); player = null;
         document.body.style.overflow = '';
-        if (fireExit && exitCb && st)
-            exitCb({ pos: posAtExit, dur: st.dur || 0, lastCue: st.lastCue || 0, ...(extra || {}) });
+        if (fireExit && st) {
+            engine = null;
+            exitCb && exitCb({ pos: posAtExit, dur: st.dur || 0, lastCue: st.lastCue || 0, ...(extra || {}) });
+        }
     }
 
     async function service() {
+        if (DESK) return window.ck.service();
         return location.origin.includes('couchking') ? location.origin : 'https://couchking.app';
     }
 
-    window.ck = {
-        platform: 'web',
-        service,
-        version: async () => 'web',
-        openExternal: (url) => window.open(url, '_blank'),
-        http: async ({ url, method = 'GET', body = null, timeoutMs = 15000 }) => {
-            try {
-                const ctl = new AbortController();
-                const t = setTimeout(() => ctl.abort(), timeoutMs);
-                const r = await fetch(url, {
-                    method, signal: ctl.signal,
-                    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-                    body: body ? JSON.stringify(body) : undefined
-                });
-                clearTimeout(t);
-                return { ok: r.ok, status: r.status, text: await r.text() };
-            } catch (e) { return { ok: false, status: 0, text: String(e).slice(0, 200) }; }
-        },
-        play: async ({ url, title, startSec = 0, seekStep = 10, sid = '', subs = [],
+    async function webPlay({ url, title, startSec = 0, seekStep = 10, sid = '', subs = [],
                        subScale = 1.0, subLang = 'en', subBg = false, subOutline = true, subPos = 0,
-                       introFromMs = -1, introToMs = -1, creditsMs = 0,
-                       nextLabel = '', hasNext = false, autonext = true }) => {
+                       introFromMs = -1, introToMs = -1, creditsMs = 0, probeDur = 0,
+                       localFile = '', inlineSubs = [],
+                       nextLabel = '', hasNext = false, autonext = true }, hooks = null) {
             closePlayer(false);
+            engine = 'web';
             const SVC = await service();
             const u = b64u(url);
-            state = { offset: startSec, dur: 0, u, SVC, step: seekStep || 10,
-                      cues: [], lastCue: 0, introHandled: false, nextShown: false, speed: 1 };
+            state = { offset: localFile ? 0 : startSec, dur: probeDur || 0, u, SVC, step: seekStep || 10,
+                      cues: [], lastCue: 0, introHandled: false, nextShown: false, speed: 1,
+                      started: false, fbTimer: null };
             player = document.createElement('div');
             player.id = 'web-player';
             player.innerHTML = `
-                <video autoplay playsinline crossorigin="anonymous"></video>
+                <video autoplay playsinline></video>
                 <div class="wp-cue"></div>
                 <div class="wp-ui">
                   <div class="wp-top">
@@ -101,8 +103,15 @@
             player.querySelector('.wp-title').textContent = title || '';
             const v = player.querySelector('video');
             const ui = player.querySelector('.wp-ui');
-            const src = (t) => `${SVC}/webplay?u=${u}&t=${Math.floor(t)}`;
+            const src = (t) => localFile ? localFile : `${SVC}/webplay?u=${u}&t=${Math.floor(t)}`;
             v.src = src(startSec);
+            if (localFile && startSec > 0) v.currentTime = startSec;
+            // silent mpv fallback (desktop): if the in-window engine can't produce a frame
+            // (codec the probe missed, remux hiccup), hand the SAME opts to mpv — the
+            // viewer just sees playback start, never an error to deal with
+            if (hooks?.fallback) state.fbTimer = setTimeout(() => {
+                if (state && !state.started) { closePlayer(false); hooks.fallback(); }
+            }, 12000);
 
             // ---- subtitles: OpenSubtitles v3 feed (same source as the TV app) via our
             // /websub CORS+VTT converter. Rendered by US into a centered, readable-width
@@ -151,8 +160,9 @@
                 player.querySelector('.wp-subs').classList.toggle('on', !!s);
                 if (!s) return;
                 try {
-                    const txt = await (await fetch(`${SVC}/websub?u=${b64u(s.url)}`)).text();
-                    if (!state || curSub !== s) return;
+                    // downloaded episodes carry their subtitle text INSIDE the meta (offline)
+                    const txt = s.vtt || await httpText(`${SVC}/websub?u=${b64u(s.url)}`);
+                    if (!state || curSub !== s || !txt) return;
                     state.cues = parseVtt(txt);
                     state.lastCue = state.cues.reduce((m, c) => Math.max(m, c.e), 0);
                 } catch {}
@@ -168,7 +178,12 @@
                 }
                 menu.classList.remove('hidden');
             };
-            if (sid) {
+            if (inlineSubs && inlineSubs.length) {
+                // offline: subtitle text was saved WITH the download — no network at all
+                subList = inlineSubs.map((x, i) => ({ vtt: x.vtt, lang: x.lang || 'English ' + (i + 1) }));
+                if (subLang !== 'off' && subList[0]) selectSub(subList[0]);
+            }
+            if (sid && !localFile) {
                 const type = sid.includes(':') ? 'series' : 'movie';
                 // RANKED subs from the addon stream FIRST (release-matched = best sync, same
                 // list the Firestick gets — AJ Sep 13: web only ever showed ONE English);
@@ -177,8 +192,8 @@
                 subList = (subs || []).filter(x => x && x.url)
                     .map((x, i) => ({ url: x.url, lang: 'English ' + (i + 1) }));
                 if (subLang !== 'off' && subList[0]) selectSub(subList[0]);
-                fetch(`https://opensubtitles-v3.strem.io/subtitles/${type}/${encodeURIComponent(sid)}.json`)
-                    .then(r => r.json()).then(d => {
+                httpText(`https://opensubtitles-v3.strem.io/subtitles/${type}/${encodeURIComponent(sid)}.json`)
+                    .then(t => JSON.parse(t || '{}')).then(d => {
                         const haveUrl = new Set(subList.map(x => x.url));
                         const perLang = new Set();
                         for (const s of (d.subtitles || [])) {
@@ -239,10 +254,13 @@
                 infoBox.classList.remove('hidden');
             };
 
-            // real duration for the timeline (fMP4 stream itself reports none)
-            fetch(`${SVC}/webplay/probe?u=${u}`).then(r => r.json()).then(d => {
-                if (state) { state.dur = d.duration || 0; paint(); }
-            }).catch(() => {});
+            // real duration for the timeline (fMP4 stream itself reports none); the desktop
+            // router already probed (probeDur rides in), a downloaded file reports its own
+            if (!state.dur && !localFile)
+                httpText(`${SVC}/webplay/probe?u=${u}`).then(t => {
+                    const d = JSON.parse(t || '{}');
+                    if (state) { state.dur = d.duration || 0; paint(); }
+                }).catch(() => {});
 
             const cur = () => state ? state.offset + (v.currentTime || 0) : 0;
             const paint = () => {
@@ -305,13 +323,24 @@
                 paintCue();
             }, 1000);
 
-            v.addEventListener('timeupdate', () => { paint(); paintCue(); posCb && posCb({ pos: cur(), dur: state?.dur || 0 }); });
+            v.addEventListener('loadedmetadata', () => {
+                if (state && localFile && v.duration > 0 && isFinite(v.duration)) { state.dur = v.duration; paint(); }
+            });
+            v.addEventListener('timeupdate', () => {
+                if (state && !state.started && v.currentTime > 0.3) { state.started = true; clearTimeout(state.fbTimer); }
+                paint(); paintCue(); posCb && posCb({ pos: cur(), dur: state?.dur || 0 });
+            });
             v.addEventListener('ended', () => {
                 // finished for real: autoplay-next rides the exit (app decides via watched
                 // rules); flag it so a finished episode advances even at odd durations
                 if (hasNext && autonext) fireNext(); else closePlayer(true);
             });
-            v.addEventListener('error', () => player?.querySelector('.wp-hint')?.classList.remove('hidden'));
+            v.addEventListener('error', () => {
+                // desktop: never show the viewer an error for a format problem — mpv takes
+                // over silently with the exact same stream + resume point
+                if (hooks?.fallback && state && !state.started) { closePlayer(false); hooks.fallback(); return; }
+                player?.querySelector('.wp-hint')?.classList.remove('hidden');
+            });
             v.addEventListener('play', () => { player.querySelector('.wp-pp').textContent = '⏸'; });
             v.addEventListener('pause', () => { player.querySelector('.wp-pp').textContent = '▶'; });
 
@@ -347,10 +376,54 @@
 
             document.body.appendChild(player);
             document.body.style.overflow = 'hidden';
-            return { ok: true };
+            return { ok: true, engine: 'web' };
+    }
+
+    if (!DESK) window.ck = {
+        platform: 'web',
+        service,
+        version: async () => 'web',
+        openExternal: (url) => window.open(url, '_blank'),
+        http: async ({ url, method = 'GET', body = null, timeoutMs = 15000 }) => {
+            try {
+                const ctl = new AbortController();
+                const t = setTimeout(() => ctl.abort(), timeoutMs);
+                const r = await fetch(url, {
+                    method, signal: ctl.signal,
+                    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+                    body: body ? JSON.stringify(body) : undefined
+                });
+                clearTimeout(t);
+                return { ok: r.ok, status: r.status, text: await r.text() };
+            } catch (e) { return { ok: false, status: 0, text: String(e).slice(0, 200) }; }
         },
+        play: (o) => webPlay(o),
         stopPlay: async () => { closePlayer(true); return { ok: true }; },
         onMpvPos: (cb) => { posCb = cb; },
         onMpvExit: (cb) => { exitCb = cb; },
     };
+
+    // ---- unified engine surface (0.9.13): app.js talks ONLY to these four ----
+    const announceMpv = () => document.dispatchEvent(new CustomEvent('ck-engine', { detail: 'mpv' }));
+    // codecs Chromium decodes; anything else (hevc/vc1/mpeg2...) goes straight to mpv.
+    // Unknown/blank codec = try the window first — the 12s no-frame fallback still saves it.
+    const CHROME_OK = ['', 'h264', 'avc1', 'vp8', 'vp9', 'av1', 'mpeg4', 'mjpeg'];
+    window.ckPlay = async (opts) => {
+        if (!DESK) return webPlay(opts);
+        const toMpv = (o) => { engine = 'mpv'; announceMpv(); return window.ck.play(o); };
+        if (opts.localFile)
+            return webPlay(opts, { fallback: () => toMpv({ ...opts, url: opts.localFile }) });
+        let p = null;
+        try {
+            const svc = await window.ck.service();
+            const r = await window.ck.http({ url: `${svc}/webplay/probe?u=${b64u(opts.url)}`, timeoutMs: 14000 });
+            p = r?.ok ? JSON.parse(r.text) : null;
+        } catch {}
+        if (p?.vcodec && !CHROME_OK.includes(String(p.vcodec).toLowerCase())) return toMpv(opts);
+        if (p?.duration > 0) opts.probeDur = p.duration;
+        return webPlay(opts, { fallback: () => toMpv(opts) });
+    };
+    window.ckStop = () => { if (DESK && engine === 'mpv') return window.ck.stopPlay(); closePlayer(true); };
+    window.ckOnPos = (cb) => { posCb = cb; if (DESK) window.ck.onMpvPos((d) => { if (engine === 'mpv') cb(d); }); };
+    window.ckOnExit = (cb) => { exitCb = cb; if (DESK) window.ck.onMpvExit((d) => { if (engine === 'mpv') { engine = null; cb(d); } }); };
 })();

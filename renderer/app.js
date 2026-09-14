@@ -255,6 +255,7 @@ async function forYouRow(kind) {
 
 // ---------- new-episode badges (synced through newEpsSeen, key = season*10000+episode) ----------
 const newEpCache = {};
+const newEpAirCache = {};   // titleId -> newest unwatched ep's air timestamp (drives CW order)
 async function newEpisodeCount(titleId) {
     if (titleId in newEpCache) return newEpCache[titleId];
     const st = pstate();
@@ -275,12 +276,26 @@ async function newEpisodeCount(titleId) {
         const k = `${titleId}:${e.season}:${e.episode}`;
         return watchedIds.has(k) || (parseInt(String(pos[k] || '').split('|')[0]) || 0) > 60000;
     });
-    if (!watched.length) return (newEpCache[titleId] = 0);
+    if (!watched.length) {
+        // never-watched but in the library (AJ Sep 14: "anything in there, watched or
+        // not") — badge counts episodes aired AFTER the show was added, same as the TV app
+        const addedAt = +((st.addedTs || {})[titleId] || 0);
+        if (!addedAt) return (newEpCache[titleId] = 0);
+        const freshAdd = eps.filter(e => aired(e) && e.released && +new Date(e.released) > addedAt);
+        const nA = Math.min(9, freshAdd.length);
+        newEpAirCache[titleId] = nA ? Math.max(...freshAdd.map(e => +new Date(e.released))) : 0;
+        return (newEpCache[titleId] = nA);
+    }
     const last = watched[watched.length - 1];
     // deep back-catalog binges: "+9" means nothing when nothing new actually aired
     const maxSeason = Math.max(0, ...eps.filter(aired).map(e => e.season));
     if (last.season < maxSeason - 1) return (newEpCache[titleId] = 0);
-    const n = Math.min(9, eps.filter(e => aired(e) && key(e) > key(last)).length);
+    const fresh = eps.filter(e => aired(e) && key(e) > key(last));
+    const n = Math.min(9, fresh.length);
+    // the air date acts like a "touch": the show sorts as if it was watched the moment
+    // the new episode dropped — front of CW that day, then normal recency order takes
+    // over as other things get watched (AJ Sep 14: badge shows must FOLLOW order, not pin)
+    newEpAirCache[titleId] = n ? Math.max(0, ...fresh.map(e => +new Date(e.released || 0) || 0)) : 0;
     return (newEpCache[titleId] = n);
 }
 // opening a show's page clears its badge — record the latest aired key as seen (merged
@@ -368,7 +383,20 @@ function paintContinueRow() {
     cwHolderEl.innerHTML = '';
     const cont = st.continue || [];
     if (!cont.length || !hasService()) return;
-    addRow('Continue Watching', cont.map(t => ({ ...t })),
+    // CW order = newest of (your last watch, a badge'd show's new-episode air date).
+    // A new episode bumps its show to the front THAT DAY like a touch — but anything you
+    // actually watch after that outranks it, so the row keeps following real order
+    // (AJ Sep 14: v1 pinned badge shows in front — "The President" sat above a
+    // just-started Lanterns; air date as a stamp fixes exactly that)
+    const stampOf = (t) => {
+        let best = 0;
+        for (const [k, v] of Object.entries(st.positions || {}))
+            if (k === t.id || k.startsWith(t.id + ':')) best = Math.max(best, +String(v).split('|')[2] || 0);
+        return best;
+    };
+    const sortKey = (t) => Math.max(stampOf(t), (newEpCache[t.id] || 0) > 0 ? (newEpAirCache[t.id] || 0) : 0);
+    const bumped = () => [...cont].sort((a, b) => sortKey(b) - sortKey(a));
+    addRow('Continue Watching', bumped().map(t => ({ ...t })),
         (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest, newEps: newEpCache[t.id] || 0 }),
         cwHolderEl);
     // "+N new episodes" pass — fills badges in place once the counts land
@@ -378,7 +406,7 @@ function paintContinueRow() {
             if (await newEpisodeCount(t.id) > 0) any = true;
         if (any && cwHolderEl.isConnected) {
             cwHolderEl.innerHTML = '';
-            addRow('Continue Watching', cont.map(t => ({ ...t })),
+            addRow('Continue Watching', bumped().map(t => ({ ...t })),
                 (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest, newEps: newEpCache[t.id] || 0 }),
                 cwHolderEl);
         }
@@ -850,6 +878,12 @@ function nextEpisodeOf(sid) {
     return eps.slice(i + 1).find(x => !x.released || new Date(x.released) <= new Date()) || null;
 }
 
+// stale-cache insurance (web only): a browser holding yesterday's ck-web.js next to
+// today's app.js still plays — the old single-engine path is a perfect stand-in
+window.ckPlay = window.ckPlay || ((o) => ck.play(o));
+window.ckOnPos = window.ckOnPos || ((cb) => ck.onMpvPos(cb));
+window.ckOnExit = window.ckOnExit || ((cb) => ck.onMpvExit(cb));
+window.ckStop = window.ckStop || (() => ck.stopPlay());
 let playing = null;
 async function play(url, label, sid, subs = null) {
     const imdb = sid.split(':')[0];
@@ -870,11 +904,10 @@ async function play(url, label, sid, subs = null) {
     if (lp > 60000 && ld > 0 && lp / ld < 0.92 && lp / 1000 > startSec) startSec = Math.floor(lp / 1000);
     const next = nextEpisodeOf(sid);
     playing = { sid, imdb, s, e, label, pos: 0, dur: 0, startMs: startSec * 1000, credits: creditsMs, next };
-    if (ck.platform !== 'web') {
-        $('playing-title').textContent = label;
-        $('playing').classList.remove('hidden');
-    }
-    await ck.play({ url, title: label, startSec, sid, subs: subs || [],
+    // 0.9.13: desktop plays IN-WINDOW through the same player as the web (AJ: raw mpv
+    // window is "awful") — mpv only takes over for codecs Chromium can't decode, silently;
+    // the banner below only appears in that mpv case (ck-engine event)
+    await ckPlay({ url, title: label, startSec, sid, subs: subs || [],
         subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), audioLang: PREF('audlang', 'en'),
         subBg: PREF('subbg', false), subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0),
         seekStep: PREF('seek', 10),
@@ -882,6 +915,14 @@ async function play(url, label, sid, subs = null) {
         hasNext: !!(next && hasService()), autonext: PREF('autonext', true),
         nextLabel: next ? `${cur?.meta?.name || ''} S${next.season}E${next.episode}${next.name ? ' — ' + next.name : ''}` : '' });
 }
+// mpv fallback engaged (HEVC & co.) — its window is external, so surface the little
+// "Now Playing / Stop" banner exactly like pre-0.9.13 desktop always did
+document.addEventListener('ck-engine', (e) => {
+    if (e.detail === 'mpv' && playing) {
+        $('playing-title').textContent = playing.label;
+        $('playing').classList.remove('hidden');
+    }
+});
 ck.onMpvDead?.((d) => {
     // phone-home the real failure so it can be fixed without the user doing anything
     try {
@@ -898,7 +939,7 @@ ck.onMpvDead?.((d) => {
     setTimeout(() => n.remove(), 12000);
 });
 
-ck.onMpvPos(({ pos, dur }) => {
+ckOnPos(({ pos, dur }) => {
     if (!playing) return;
     playing.pos = pos; playing.dur = dur;
     if (dur > 0) $('playing-pos').textContent = `${fmt(pos)} / ${fmt(dur)}`;
@@ -922,7 +963,7 @@ function finishPointSec(durSec, creditsMs, lastCueSec) {
         : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 90);
     return Math.max(durSec - lead, durSec * 0.8);
 }
-ck.onMpvExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
+ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     $('playing').classList.add('hidden');
     const p = playing; playing = null;
     if (!p || !dur || pos < 0.5) { if (p && next) advanceNext(p); return; }   // 0.5s floor (AJ Sep 13, was 5s)
@@ -976,7 +1017,7 @@ function advanceNext(p) {
     episodePage(cur.t || { id: p.imdb, type: 'series' }, cur.meta, nxt, true);
 }
 const fmt = (s) => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(s % 60).padStart(2, '0'); };
-$('playing-stop').onclick = () => ck.stopPlay();
+$('playing-stop').onclick = () => ckStop();
 
 // ---------- wiring ----------
 $('auth-signin').onclick = () => auth('signin');
