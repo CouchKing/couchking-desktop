@@ -146,11 +146,13 @@
             };
             styleCue();
             // entities show up literally in a hand-rendered cue (&amp;#39; etc) — decode;
-            // strip tags again AFTER decoding so encoded markup (&lt;i&gt;) drops too
-            const unent = (s) => s
+            // strip tags again AFTER decoding so encoded markup (&lt;i&gt;) drops too.
+            // Two passes: OpenSubtitles files are often DOUBLE-encoded (&amp;#39;)
+            const unent1 = (s) => s
                 .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
                 .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
                 .replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+            const unent = (s) => unent1(unent1(s));
             const parseVtt = (txt) => {
                 const cues = [];
                 // hours are OPTIONAL (MM:SS.mmm is legal VTT and common) — the old
