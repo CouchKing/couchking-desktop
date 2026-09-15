@@ -1152,7 +1152,11 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     // lead, ≥80% floor) AND a real sitting (2+ min or true end) — a bogus near-end
     // landing + immediate back must NOT count as watched
     const finish = finishPointSec(dur, p.credits, lastCue);
-    const realSit = posMs - p.startMs >= 120000 || posMs >= durMs - 5000;
+    // false-watched fix (mirror of Firestick): a short/broken/wrong stream can fire
+    // 'ended' with pos≈dur of the SHORT file, which used to satisfy `posMs >= durMs-5000`
+    // and mark the real episode watched at ~4%. Started-near-the-top + <2min played must
+    // NEVER count; only a genuine RESUME near the end (started deep, p.startMs≥2min) does.
+    const realSit = posMs - p.startMs >= 120000 || p.startMs >= 120000;
     const watchedNow = pos >= finish && realSit;
     // finished a downloaded copy + "Auto-delete watched" on → space back immediately
     if (watchedNow && ck.dlDelete && PREF('dlautodel', false)) try { ck.dlDelete(dlKeyOf(p.sid)); } catch {}

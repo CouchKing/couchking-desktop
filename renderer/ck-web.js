@@ -15,6 +15,29 @@
 // shown/reported is offset + video.currentTime, duration from /webplay/probe.
 (function () {
     const DESK = !!window.ck;   // preload ran first = Electron
+
+    // Live-captions side panel CSS — matches the look of .wp-menu (see style.css) but
+    // pinned to the RIGHT edge and vertically centred so it stays open while the viewer
+    // clicks through tracks, and never covers the bottom-centre .wp-cue captions.
+    if (!document.getElementById('wp-subpanel-css')) {
+        const st = document.createElement('style');
+        st.id = 'wp-subpanel-css';
+        st.textContent = `
+#web-player .wp-subpanel { position:absolute; right:0; top:50%; transform:translateY(-50%);
+                           max-height:70vh; width:280px; overflow-y:auto;
+                           background:var(--card); border:1px solid #37315C; border-right:none;
+                           border-radius:16px 0 0 16px; padding:.7rem;
+                           display:flex; flex-direction:column; gap:.2rem;
+                           box-shadow:0 12px 40px #000C; z-index:120; }
+#web-player .wp-subpanel .wp-sptitle { color:var(--muted); font-size:.72rem; font-weight:800;
+                           text-transform:uppercase; letter-spacing:.08em; padding:.2rem .9rem .5rem; }
+#web-player .wp-subpanel button { background:transparent; padding:.55rem .9rem; text-align:left;
+                           border-radius:10px; font-size:.95rem; color:#fff; }
+#web-player .wp-subpanel button:hover { background:#332D55; }
+#web-player .wp-subpanel button.on { background:transparent; color:var(--accent); font-weight:800; }
+#web-player .wp-subpanel button.on:hover { background:#332D55; }`;
+        document.head.appendChild(st);
+    }
     const b64u = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     const fmt = (s) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(s % 60).padStart(2, '0'); };
     const clock = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -96,6 +119,7 @@
                     </div>
                   </div>
                   <div class="wp-menu hidden"></div>
+                  <div class="wp-subpanel hidden"></div>
                   <div class="wp-infobox hidden"></div>
                   <div class="wp-hint hidden">Trouble playing? Some formats need the free desktop app —
                     <a href="https://couchking.app/downloads" target="_blank">couchking.app/downloads</a></div>
@@ -220,6 +244,26 @@
                 } catch {}
             };
             const menu = player.querySelector('.wp-menu');
+            // Live-captions side panel: a scrollable track list pinned to the right that
+            // STAYS OPEN as tracks are clicked (each applied live via selectSub), so the
+            // viewer can watch the on-screen cues and find the one that lines up. It only
+            // closes on the 💬 toggle, Back/close, or a controls tap.
+            const subPanel = player.querySelector('.wp-subpanel');
+            const renderSubPanel = () => {
+                subPanel.innerHTML = '';
+                const h = document.createElement('div');
+                h.className = 'wp-sptitle'; h.textContent = 'Subtitles';
+                subPanel.appendChild(h);
+                const row = (label, fn, on) => {
+                    const b = document.createElement('button');
+                    b.textContent = on ? label + '   ✓' : label;
+                    b.className = on ? 'on' : '';
+                    b.onclick = () => { fn(); renderSubPanel(); };   // re-render moves the ✓, panel stays open
+                    subPanel.appendChild(b);
+                };
+                row('Subtitles off', () => selectSub(null), !curSub);
+                for (const s of subList) row(s.lang || '?', () => selectSub(s), curSub === s);
+            };
             // CouchKing panel: section title on top, current choice purple with a ✓
             const openMenu = (title, items) => {
                 menu.innerHTML = '';
@@ -267,10 +311,12 @@
                         if (pref) selectSub(pref, true);
                     }).catch(() => {});
             }
-            player.querySelector('.wp-subs').onclick = () => menu.classList.contains('hidden')
-                ? openMenu('Subtitles', [['Subtitles off', () => selectSub(null), !curSub],
-                    ...subList.map(s => [s.lang || '?', () => selectSub(s), curSub === s])])
-                : menu.classList.add('hidden');
+            // TOGGLE the live side panel (not the auto-closing openMenu) so tracks can be
+            // sampled one after another; empty subList still shows just "Subtitles off"
+            player.querySelector('.wp-subs').onclick = () => {
+                if (subPanel.classList.contains('hidden')) { renderSubPanel(); subPanel.classList.remove('hidden'); }
+                else subPanel.classList.add('hidden');
+            };
             // reset timers are CANCELLED on re-click — stacked timeouts made the label
             // flip back mid-cycling and lag behind fast presses (AJ Sep 14)
             let sizeT = null, fitT = null;
@@ -437,7 +483,11 @@
                 const r = e.currentTarget.getBoundingClientRect();
                 seekTo(state.dur * (e.clientX - r.left) / r.width);
             };
-            v.onclick = () => v.paused ? v.play() : v.pause();
+            v.onclick = () => {
+                // tapping the video dismisses any open overlay so it isn't left stranded
+                menu.classList.add('hidden'); subPanel.classList.add('hidden');
+                v.paused ? v.play() : v.pause();
+            };
 
             // controls fade like the TV player: show on mouse move, hide after 3s idle
             let hideT = null;
