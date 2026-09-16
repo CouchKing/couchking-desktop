@@ -298,10 +298,13 @@ select:focus, select:hover { border-color:var(--accent); }
 .color-pick button.on { border-color:#fff; opacity:1; }
 /* drag-to-reorder shelves */
 .reorder-list { display:flex; flex-direction:column; gap:.4rem; max-width:520px; }
-.reorder-row { display:flex; align-items:center; gap:.6rem; background:var(--card2); border-radius:10px; padding:.6rem .8rem; cursor:grab; }
-.reorder-row.dragging { opacity:.5; }
+.reorder-row { display:flex; align-items:center; gap:.6rem; background:var(--card2); border-radius:10px; padding:.6rem .8rem; cursor:grab; touch-action:none; user-select:none; }
+.reorder-row.dragging { opacity:.6; cursor:grabbing; box-shadow:0 4px 14px #000a; }
 .reorder-row .grip { color:var(--muted); font-size:1.1rem; }
 .reorder-row .num { color:var(--muted); min-width:1.4rem; }
+.reorder-row .rl { flex:1; }
+.reorder-row .ro-btns { display:flex; gap:.3rem; }
+.reorder-row .ro-btns button { padding:.2rem .5rem; }
 
 /* sign-in prompt overlay (guest tries to play / save) */
 #gate { position:fixed; inset:0; background:#000B; display:flex; align-items:center; justify-content:center; z-index:90; }

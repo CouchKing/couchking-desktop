@@ -1761,30 +1761,55 @@ function shelfReorder() {
         const persist = () => { st.shelves = order.slice(); pushAccount(); };
         const list = document.createElement('div'); list.className = 'reorder-list';
         let dragEl = null;
-        const render = () => {
-            list.innerHTML = '';
-            if (!order.length) { list.innerHTML = '<p class="muted">No shelves on yet — add some in Settings → Shelves.</p>'; return; }
-            order.forEach((label, i) => {
-                const row = document.createElement('div'); row.className = 'reorder-row'; row.draggable = true;
-                row.innerHTML = `<span class="grip">⋮⋮</span><span class="num">${i + 1}.</span><span>${label}</span>`;
-                row.dataset.label = label;
-                row.addEventListener('dragstart', () => { dragEl = row; row.classList.add('dragging'); });
-                row.addEventListener('dragend', () => { row.classList.remove('dragging'); dragEl = null; });
-                row.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    if (!dragEl || dragEl === row) return;
-                    const rows = [...list.querySelectorAll('.reorder-row')];
-                    const from = rows.indexOf(dragEl), to = rows.indexOf(row);
-                    if (from < 0 || to < 0) return;
-                    order.splice(to, 0, order.splice(from, 1)[0]);
-                    persist(); render();
-                });
-                // touch fallback (phones): tap moves the row up one; long-press-free + simple
-                row.addEventListener('click', () => { if (i > 0) { order.splice(i - 1, 0, order.splice(i, 1)[0]); persist(); render(); } });
-                list.appendChild(row);
-            });
+        const renumber = () => [...list.querySelectorAll('.reorder-row')].forEach((r, i) => {
+            const n = r.querySelector('.num'); if (n) n.textContent = (i + 1) + '.';
+        });
+        const commitFromDOM = () => {   // rebuild order from the live DOM order + save
+            order = [...list.querySelectorAll('.reorder-row')].map(r => r.dataset.label);
+            renumber(); persist();
         };
-        render();
+        const rowUnder = (y) => [...list.querySelectorAll('.reorder-row')].find(r => {
+            if (r === dragEl) return false;
+            const b = r.getBoundingClientRect();
+            return y < b.top + b.height / 2;
+        });
+        const rowEl = (label) => {
+            const row = document.createElement('div'); row.className = 'reorder-row'; row.dataset.label = label;
+            row.innerHTML = `<span class="grip">⋮⋮</span><span class="num"></span><span class="rl">${label}</span>`;
+            const btns = document.createElement('span'); btns.className = 'ro-btns';
+            const up = document.createElement('button'); up.textContent = '▲'; up.className = 'ghost small';
+            up.onclick = (e) => { e.stopPropagation(); const p = row.previousElementSibling; if (p && p.classList.contains('reorder-row')) { list.insertBefore(row, p); commitFromDOM(); } };
+            const dn = document.createElement('button'); dn.textContent = '▼'; dn.className = 'ghost small';
+            dn.onclick = (e) => { e.stopPropagation(); const nx = row.nextElementSibling; if (nx) { list.insertBefore(nx, row); commitFromDOM(); } };
+            btns.append(up, dn); row.appendChild(btns);
+            // POINTER-based drag = works with mouse AND touch (mobile) — HTML5 draggable ignores
+            // touch entirely. Drag from anywhere on the row except the ▲▼ buttons. touch-action:none
+            // (CSS) lets a touch drag reorder instead of scrolling the page. (AJ Sep 15)
+            row.addEventListener('pointerdown', (e) => {
+                if (e.target.tagName === 'BUTTON') return;
+                e.preventDefault();
+                dragEl = row; row.classList.add('dragging');
+                try { row.setPointerCapture(e.pointerId); } catch (_) {}
+                const move = (ev) => {
+                    const y = ev.clientY;
+                    const after = rowUnder(y);
+                    if (after) list.insertBefore(dragEl, after); else list.appendChild(dragEl);
+                };
+                const end = () => {
+                    row.classList.remove('dragging'); dragEl = null;
+                    row.removeEventListener('pointermove', move);
+                    row.removeEventListener('pointerup', end);
+                    row.removeEventListener('pointercancel', end);
+                    commitFromDOM();
+                };
+                row.addEventListener('pointermove', move);
+                row.addEventListener('pointerup', end);
+                row.addEventListener('pointercancel', end);
+            });
+            return row;
+        };
+        if (!order.length) list.innerHTML = '<p class="muted">No shelves on yet — add some in Settings → Shelves.</p>';
+        else { order.forEach(l => list.appendChild(rowEl(l))); renumber(); }
         body.appendChild(list);
     });
 }
