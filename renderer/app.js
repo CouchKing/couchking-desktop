@@ -1090,7 +1090,7 @@ async function play(url, label, sid, subs = null) {
     const imdb = sid.split(':')[0];
     const [, s, e] = sid.split(':');
     // cross-device resume + learned intro window + learned credits point, one call
-    let startSec = 0, introFromMs = -1, introToMs = -1, creditsMs = 0;
+    let startSec = 0, introFromMs = -1, introToMs = -1, creditsMs = 0, acList = [];
     try {
         const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`);
         if (r) {
@@ -1098,6 +1098,7 @@ async function play(url, label, sid, subs = null) {
                 startSec = Math.floor(r.pos / 1000);
             if (r.introFrom != null && r.introTo > r.introFrom) { introFromMs = r.introFrom; introToMs = r.introTo; }
             if (r.credits > 0) creditsMs = r.credits;
+            if (Array.isArray(r.afterCredits)) acList = r.afterCredits;
         }
     } catch {}
     // whichever device is further in wins — but a local synced position can be fresher
@@ -1112,7 +1113,7 @@ async function play(url, label, sid, subs = null) {
         subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), audioLang: PREF('audlang', 'en'),
         subBg: PREF('subbg', false), subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0),
         seekStep: PREF('seek', 10),
-        introFromMs, introToMs, creditsMs,
+        introFromMs, introToMs, creditsMs, afterCredits: acList,
         hasNext: !!(next && hasService()), autonext: PREF('autonext', true),
         nextLabel: next ? `${cur?.meta?.name || ''} S${next.season}E${next.episode}${next.name ? ' — ' + next.name : ''}` : '' });
 }

@@ -77,6 +77,7 @@
     async function webPlay({ url, title, startSec = 0, seekStep = 10, sid = '', subs = [],
                        subScale = 1.0, subLang = 'en', subBg = false, subOutline = true, subPos = 0,
                        introFromMs = -1, introToMs = -1, creditsMs = 0, probeDur = 0,
+                       afterCredits = [],
                        localFile = '', inlineSubs = [],
                        nextLabel = '', hasNext = false, autonext = true }, hooks = null) {
             closePlayer(false);
@@ -411,7 +412,11 @@
             const skipBtn = player.querySelector('.wp-skip');
             const nextCard = player.querySelector('.wp-next');
             player.querySelector('.wpn-title').textContent = nextLabel || '';
-            skipBtn.onclick = () => { state.introHandled = true; skipBtn.classList.add('hidden'); seekTo(introToMs / 1000); };
+            skipBtn.onclick = () => {
+                if (state.skipMode === 'after' && state.pendingAfter > 0) {
+                    skipBtn.classList.add('hidden'); seekTo(state.pendingAfter / 1000);
+                } else { state.introHandled = true; skipBtn.classList.add('hidden'); seekTo(introToMs / 1000); }
+            };
             const fireNext = () => {
                 if (!state || !state.dur) { closePlayer(true, { next: true }); return; }
                 const remMs = Math.max(0, Math.round((state.dur - cur()) * 1000));
@@ -443,8 +448,23 @@
                     if (!state.introHandled && introFromMs >= 0 && introToMs > introFromMs) {
                         const p = cur() * 1000;
                         const inWin = p >= introFromMs && p <= introToMs - 2000;
+                        if (inWin) { state.skipMode = 'intro'; skipBtn.textContent = 'Skip intro ⏭'; }
                         skipBtn.classList.toggle('hidden', !inWin);
                         if (!inWin && p >= introToMs - 2000) state.introHandled = true;
+                    }
+                    // after-credits (AJ Sep 16): jump-to-scene button per stinger, in sequence
+                    if (afterCredits.length) {
+                        const p = cur() * 1000;
+                        const nextAc = afterCredits.find(x => x.from > p + 1500);
+                        const prevEnd = Math.max(-1, ...afterCredits.filter(x => x.to <= p).map(x => x.to));
+                        const creditsPt = (state.dur * 1000) - (creditsMs || 90000);
+                        const floor = nextAc ? Math.max(creditsPt, nextAc.from - 90000, prevEnd) : Infinity;
+                        const inAfter = nextAc && p >= floor && p < nextAc.from - 1500 && !(introFromMs >= 0 && p <= introToMs);
+                        if (inAfter) {
+                            state.skipMode = 'after'; state.pendingAfter = nextAc.from;
+                            skipBtn.textContent = afterCredits.length > 1 ? `After credits ▶ (${afterCredits.indexOf(nextAc) + 1}/${afterCredits.length})` : 'After credits ▶';
+                            skipBtn.classList.remove('hidden');
+                        } else if (state.skipMode === 'after') { skipBtn.classList.add('hidden'); state.skipMode = 'intro'; }
                     }
                 }
                 paintCue();
