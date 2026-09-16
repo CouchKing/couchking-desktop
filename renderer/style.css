@@ -136,6 +136,11 @@ select:focus, select:hover { border-color:var(--accent); }
 .streams { margin-top:1rem; }
 .stream { background:var(--card); border-radius:10px; padding:.7rem 1rem; margin-bottom:.45rem; cursor:pointer; }
 .stream:hover { background:var(--card2); }
+/* ckNotice (AJ Sep 16): "hasn't aired yet" info banner — reads as a message, not a button */
+.stream.ck-notice { cursor:default; background:transparent; border:1px dashed var(--card2); }
+.stream.ck-notice:hover { background:transparent; }
+.stream.ck-notice b { color:var(--muted); }
+.stream.ck-notice .stream-title { color:var(--fg); font-size:1rem; }
 .stream b { color:var(--accent); margin-right:.6rem; }
 
 /* ---- settings: EXACT app layout — user card, tappable rows, section headers ---- */

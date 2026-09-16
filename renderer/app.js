@@ -857,10 +857,12 @@ async function episodePage(t, meta, ep, autoplay = false) {
     holder.innerHTML = '';
     for (const s of streams) {
         const el = streamEl(s);
-        el.onclick = () => playEpisodeStream(s, meta, ep, sid, label);
+        // ckNotice (AJ Sep 16): "hasn't aired yet"-style rows are info banners, not buttons
+        if (!s.ckNotice) el.onclick = () => playEpisodeStream(s, meta, ep, sid, label);
         holder.appendChild(el);
     }
-    if (autoplay && streams[0]) playEpisodeStream(streams[0], meta, ep, sid, label);
+    const auto0 = streams.find(s => !s.ckNotice);
+    if (autoplay && auto0) playEpisodeStream(auto0, meta, ep, sid, label);
 }
 function playEpisodeStream(s, meta, ep, sid, label) {
     // Continue Watching means you PLAYED it — not that you looked at the page
@@ -895,7 +897,7 @@ function playTrailerWeb(ytId) {
 /** One stream row, prettier (AJ Sep 13 "make the streams look better"): source name,
  *  quality/flavor as chips, episode line under it, ⏳ notes highlighted. */
 function streamEl(st) {
-    const el = document.createElement('div'); el.className = 'stream';
+    const el = document.createElement('div'); el.className = st.ckNotice ? 'stream ck-notice' : 'stream';
     const parts = String(st.name || '').split('|').map(x => x.trim()).filter(Boolean);
     const src = parts.shift() || 'Stream';
     const lines = String(st.description || st.title || '').split('\n');
@@ -922,13 +924,14 @@ async function pickStream(sid, label, autoFirst = false) {
         }
         play(st.url, label, sid, st.subtitles || null);
     };
-    if (autoFirst && streams[0]) { start(streams[0]); return; }
+    const _auto0 = streams.find(s => !s.ckNotice);
+    if (autoFirst && _auto0) { start(_auto0); return; }
     holder.innerHTML = '<div class="row-label">Streams</div>';
     for (const st of streams) {
         const el = streamEl(st);
-        el.onclick = () => start(st);
+        if (!st.ckNotice) el.onclick = () => start(st);
         // desktop: one-tap offline download per stream (web can't hold GBs — no button)
-        if (ck.dlStart) {
+        if (ck.dlStart && !st.ckNotice) {
             const dl = document.createElement('button');
             dl.className = 'ghost small dl-btn'; dl.textContent = '⬇'; dl.title = 'Download for offline';
             dl.onclick = (ev) => { ev.stopPropagation(); startDownload(st, sid, label); };
