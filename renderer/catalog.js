@@ -18,14 +18,14 @@ const CK_CAT = (() => {
         { label: "Trending Today", type: "movie", tmdb: "trending/movie/day" },
         { label: "Christmas Movies", type: "movie", tmdb: "discover/movie?with_keywords=207317&sort_by=popularity.desc" },
         { label: "Halloween Movies", type: "movie", tmdb: "discover/movie?with_keywords=3335&sort_by=popularity.desc" },
-        { label: "Date Night", type: "movie", tmdb: "discover/movie?with_genres=10749,35&sort_by=popularity.desc&vote_count.gte=200" },
-        { label: "Superheroes", type: "movie", tmdb: "discover/movie?with_keywords=9715&sort_by=popularity.desc&vote_count.gte=100" },
-        { label: "Zombies", type: "movie", tmdb: "discover/movie?with_keywords=12377&sort_by=popularity.desc&vote_count.gte=50" },
-        { label: "Time Travel", type: "movie", tmdb: "discover/movie?with_keywords=4379&sort_by=popularity.desc&vote_count.gte=100" },
-        { label: "Feel-Good", type: "movie", tmdb: "discover/movie?with_genres=35,10751&sort_by=popularity.desc&vote_count.gte=300" },
-        { label: "Tearjerkers", type: "movie", tmdb: "discover/movie?with_genres=18,10749&sort_by=vote_average.desc&vote_count.gte=500" },
-        { label: "Summer Blockbusters", type: "movie", tmdb: "discover/movie?with_genres=28,12&sort_by=popularity.desc&vote_count.gte=1000" },
-        { label: "Fantasy Worlds", type: "movie", tmdb: "discover/movie?with_genres=14&sort_by=popularity.desc&vote_count.gte=300" },
+        { label: "Date Night", type: "movie", tmdb: "discover/movie?with_genres=10749,35&sort_by=popularity.desc&vote_count.gte=200", tvTmdb: "discover/tv?with_genres=35&sort_by=popularity.desc&vote_count.gte=100" },
+        { label: "Superheroes", type: "movie", tmdb: "discover/movie?with_keywords=9715&sort_by=popularity.desc&vote_count.gte=100", tvTmdb: "discover/tv?with_keywords=9715&sort_by=popularity.desc&vote_count.gte=20" },
+        { label: "Zombies", type: "movie", tmdb: "discover/movie?with_keywords=12377&sort_by=popularity.desc&vote_count.gte=50", tvTmdb: "discover/tv?with_keywords=12377&sort_by=popularity.desc&vote_count.gte=15" },
+        { label: "Time Travel", type: "movie", tmdb: "discover/movie?with_keywords=4379&sort_by=popularity.desc&vote_count.gte=100", tvTmdb: "discover/tv?with_keywords=4379&sort_by=popularity.desc&vote_count.gte=15" },
+        { label: "Feel-Good", type: "movie", tmdb: "discover/movie?with_genres=35,10751&sort_by=popularity.desc&vote_count.gte=300", tvTmdb: "discover/tv?with_genres=35,10751&sort_by=popularity.desc&vote_count.gte=100" },
+        { label: "Tearjerkers", type: "movie", tmdb: "discover/movie?with_genres=18,10749&sort_by=vote_average.desc&vote_count.gte=500", tvTmdb: "discover/tv?with_genres=18&sort_by=vote_average.desc&vote_count.gte=200" },
+        { label: "Summer Blockbusters", type: "movie", tmdb: "discover/movie?with_genres=28,12&sort_by=popularity.desc&vote_count.gte=1000", tvTmdb: "discover/tv?with_genres=10759&sort_by=popularity.desc&vote_count.gte=200" },
+        { label: "Fantasy Worlds", type: "movie", tmdb: "discover/movie?with_genres=14&sort_by=popularity.desc&vote_count.gte=300", tvTmdb: "discover/tv?with_genres=10765&sort_by=popularity.desc&vote_count.gte=100" },
         { label: "War Movies", type: "movie", tmdb: "discover/movie?with_genres=10752&sort_by=popularity.desc&vote_count.gte=200" },
         { label: "Musicals", type: "movie", tmdb: "discover/movie?with_genres=10402&sort_by=popularity.desc&vote_count.gte=100" },
         { label: "Cozy Mystery Series", type: "series", tmdb: "discover/tv?with_genres=9648&sort_by=popularity.desc&vote_count.gte=50" },
@@ -136,5 +136,9 @@ const CK_CAT = (() => {
     const TMDB_TV_GENRE_IDS = { Action: 10759, Adventure: 10759, Animation: 16, Comedy: 35, Crime: 80,
         Documentary: 99, Drama: 18, Family: 10751, Fantasy: 10765, Mystery: 9648, Romance: 10749,
         "Sci-Fi": 10765, War: 10768, Western: 37 };
-    return { SHELF_CATALOG, DEFAULT_SHELVES, MOVIE_CATS, TV_CATS, SHELF_GROUPS, GENRES, TMDB_GENRE_IDS, TMDB_TV_GENRE_IDS };
+    // profile avatars + background colors — SAME sets as the TV app (parity)
+    const AVATAR_CHOICES = ["👑","🦁","🦊","🐼","🐸","🚀","🌸","🎮","🐱","🐶","🐰","🐻",
+        "🐧","🦄","⚽","🍕","🤖","👽","🦸","🍿","⭐","🌟","🎈","🎸"];
+    const COLOR_CHOICES = ["#7B5BF5","#E2574C","#4CAF7D","#E2A54C","#4C9DE2","#C24CE2","#E24C9D","#3FB6B0"];
+    return { SHELF_CATALOG, DEFAULT_SHELVES, MOVIE_CATS, TV_CATS, SHELF_GROUPS, GENRES, TMDB_GENRE_IDS, TMDB_TV_GENRE_IDS, AVATAR_CHOICES, COLOR_CHOICES };
 })();

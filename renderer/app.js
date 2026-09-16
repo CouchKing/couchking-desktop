@@ -66,6 +66,22 @@ function guest() {
     $('prof-name').textContent = 'Guest'; $('prof-avatar').textContent = '👤';
     show('main'); home();
 }
+// profile avatar background color — the chosen color, else one derived from the id (same
+// palette + hash as the TV app so a profile looks identical on every device). (AJ Sep 15)
+function profColor(p) {
+    if (p && p.color) return p.color;
+    const id = (p && p.id) || '';
+    let h = 0; for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0;
+    const pal = CK_CAT.COLOR_CHOICES;
+    return pal[Math.abs(h) % pal.length];
+}
+function paintAvatar(el, p) {
+    if (!el) return;
+    el.textContent = (p && p.avatar) || (p && p.name ? p.name[0].toUpperCase() : '👤');
+    el.style.background = p ? profColor(p) : '#241F3D';
+    el.style.borderRadius = '50%';
+    el.style.display = 'inline-flex'; el.style.alignItems = 'center'; el.style.justifyContent = 'center';
+}
 // guest hits a wall on anything account-backed → friendly sign-in gate
 function gate(msg) {
     document.getElementById('gate')?.remove();
@@ -101,7 +117,7 @@ async function bootstrap() {
     // two same-named profiles never blend, and web + Firestick share ONE ckpos resume key
     S.useg = prof ? `${prof.name} #${String(prof.id).slice(-4)}` : S.user;
     $('prof-name').textContent = S.user;
-    $('prof-avatar').textContent = prof?.avatar || '👤';
+    paintAvatar($('prof-avatar'), prof);
     applyAccountPrefs();
     lastSyncSig = syncSig();
     show('main'); home();
@@ -228,6 +244,14 @@ async function idsRow(type, ids) {
 }
 async function rowItems(r) {
     if (r.ids) return idsRow(r.type, r.ids);   // curated watch orders: EXACT order, never shuffled
+    // theme category spanning both types (Superheroes/Zombies/…): movies + shows interleaved
+    if (r.tvTmdb && r.tmdb) {
+        const [mv, tv] = await Promise.all([tmdbRow('movie', r.tmdb), tmdbRow('tv', r.tvTmdb)]);
+        const out = []; const n = Math.max(mv.length, tv.length);
+        for (let i = 0; i < n; i++) { if (mv[i]) out.push(mv[i]); if (tv[i]) out.push(tv[i]); }
+        const seen = new Set();
+        return profileMix(out.filter(x => x && !seen.has(x.id) && seen.add(x.id)));
+    }
     if (r.tmdb) return profileMix(await tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb));
     return profileMix(await cineRow(r.type, r.cine, r.genre, 2));
 }
@@ -488,7 +512,10 @@ async function home() {
     }
     // the profile's shelf line-up SYNCS from the account (same picks as the Firestick)
     const enabled = (st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES;
-    for (const r of CK_CAT.SHELF_CATALOG.filter(x => enabled.includes(x.label))) {
+    // render in the USER'S chosen order (was SHELF_CATALOG order, which ignored reordering)
+    for (const label of enabled) {
+        const r = CK_CAT.SHELF_CATALOG.find(x => x.label === label);
+        if (!r) continue;
         const s = slot();
         rowItems(r).then(items => fill(s, r.label, items));
     }
@@ -1278,7 +1305,7 @@ async function checkUpdate() {
 // ---------- Discover (Stremio-style, EXACT app port): three DROPDOWNS — Type /
 // Catalog (MOVIE_CATS · TV_CATS) / Genre — deep pools (12 TMDB pages, 5 Cinemeta),
 // per-profile daily shuffle, rows of 15 ----------
-let dType = 'movie', dCatIx = 0, dGenre = null, dLoadToken = 0;
+let dType = 'movie', dCatIx = 0, dGenre = null, dYear = null, dLoadToken = 0;
 const dCats = () => dType === 'movie' ? CK_CAT.MOVIE_CATS : CK_CAT.TV_CATS;
 function discoverPickers() {
     const bar = $('discover-pickers');
@@ -1296,6 +1323,9 @@ function discoverPickers() {
         v => { dCatIx = Math.max(0, dCats().findIndex(c => c.label === v)); discover(); });
     mk('Genre', ['All genres', ...CK_CAT.GENRES.filter(g => g !== 'All')], dGenre || 'All genres',
         v => { dGenre = v === 'All genres' ? null : v; discover(); });
+    const years = []; for (let y = new Date().getFullYear(); y >= 1950; y--) years.push(String(y));
+    mk('Year', ['All years', ...years], dYear ? String(dYear) : 'All years',
+        v => { dYear = v === 'All years' ? null : parseInt(v); discover(); });
 }
 async function discover() {
     discoverPickers();
@@ -1304,7 +1334,16 @@ async function discover() {
     const cat = dCats()[Math.min(dCatIx, dCats().length - 1)];
     const kind = dType === 'series' ? 'tv' : 'movie';
     let items;
-    if (cat.foryou) {
+    if (dYear && !cat.foryou) {
+        // YEAR forces an accurate TMDB discover (keeps the provider filter if the catalog is
+        // a discover/ one, and honors genre) — parity with the TV app's year filter. (AJ Sep 15)
+        const yp = kind === 'tv' ? `first_air_date_year=${dYear}` : `primary_release_year=${dYear}`;
+        let base = (cat.tmdb && cat.tmdb.startsWith('discover/')) ? cat.tmdb : `discover/${kind}?sort_by=popularity.desc&vote_count.gte=40`;
+        const gid = dGenre ? (dType === 'series' ? CK_CAT.TMDB_TV_GENRE_IDS : CK_CAT.TMDB_GENRE_IDS)[dGenre] : null;
+        if (gid) base += `&with_genres=${gid}`;
+        base += `&${yp}`;
+        items = profileMix(await tmdbRow(kind, base, 12, 400));
+    } else if (cat.foryou) {
         items = await forYouRow(kind);
         if (!items.length) items = await tmdbRow(kind, `trending/${kind}/week`);
     } else if (cat.tmdb) {
@@ -1324,7 +1363,7 @@ async function discover() {
     if (!items.length) { h.innerHTML = '<p class="muted" style="padding-top:1rem">Nothing here.</p>'; return; }
     // rows of 15, label on the first — same as the TV app's Discover
     for (let i = 0; i < items.length; i += 15)
-        addRow(i === 0 ? `${cat.label}${dGenre ? ' · ' + dGenre : ''}` : '', items.slice(i, i + 15), null, h);
+        addRow(i === 0 ? `${cat.label}${dGenre ? ' · ' + dGenre : ''}${dYear ? ' · ' + dYear : ''}` : '', items.slice(i, i + 15), null, h);
 }
 
 // ---------- Library (Stremio-style: search + type chips + sort cycle + rows) ----------
@@ -1422,12 +1461,12 @@ document.querySelectorAll('.rail-item.nav').forEach(n => n.onclick = () => nav(n
 // ---------- active profile ----------
 function pstate() { return S.state.states?.[S.pid] || S.state; }
 // full profile manager (switch / add / rename / avatar / delete) — same as the apps
-const AVATARS = ['👤', '😀', '😎', '👑', '🐱', '🐶', '🦊', '🐼', '👻', '🤖', '🦄', '🍿'];
+const AVATARS = CK_CAT.AVATAR_CHOICES;   // same 24 as the TV app
 $('rail-profile').onclick = () => { if (!S.guest && S.token) profileManager(); };
 function switchProfile(p) {
     S.pid = p.id; S.user = p.name; S.useg = `${p.name} #${String(p.id).slice(-4)}`;
     localStorage.setItem('ck-pid', p.id);
-    $('prof-name').textContent = p.name; $('prof-avatar').textContent = p.avatar || '👤';
+    $('prof-name').textContent = p.name; paintAvatar($('prof-avatar'), p);
     applyAccountPrefs();
     for (const k of Object.keys(newEpCache)) delete newEpCache[k];
     home(); if (page === 'library') library();
@@ -1474,6 +1513,7 @@ function profileManager() {
     };
     const editView = (p) => {
         let avatar = p?.avatar || '👤';
+        let color = p?.color || '';
         card.innerHTML = `<h3>${p ? 'Edit profile' : 'New profile'}</h3>`;
         const nameIn = document.createElement('input'); nameIn.placeholder = 'Name'; nameIn.value = p?.name || '';
         const picks = document.createElement('div'); picks.className = 'avatar-pick';
@@ -1482,13 +1522,21 @@ function profileManager() {
             b.onclick = () => { avatar = a; [...picks.children].forEach(c => c.classList.toggle('on', c.textContent === a)); };
             picks.appendChild(b);
         }
+        // background-color swatches (parity with the TV app's avatar colors)
+        const cpicks = document.createElement('div'); cpicks.className = 'color-pick';
+        for (const c of CK_CAT.COLOR_CHOICES) {
+            const b = document.createElement('button'); b.style.background = c;
+            b.className = c === color ? 'on' : '';
+            b.onclick = () => { color = c; [...cpicks.children].forEach((el, i) => el.classList.toggle('on', CK_CAT.COLOR_CHOICES[i] === color)); };
+            cpicks.appendChild(b);
+        }
         const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
         save.onclick = () => {
             const name = nameIn.value.trim(); if (!name) return;
             S.state.profiles = S.state.profiles || [];
-            if (p) { p.name = name; p.avatar = avatar; if (p.id === S.pid) switchProfile(p); }
+            if (p) { p.name = name; p.avatar = avatar; p.color = color; if (p.id === S.pid) switchProfile(p); }
             else {
-                const np = { id: 'p' + Date.now().toString(36), name, avatar };
+                const np = { id: 'p' + Date.now().toString(36), name, avatar, color };
                 S.state.profiles.push(np);
                 S.state.states = S.state.states || {};
                 S.state.states[np.id] = {};
@@ -1497,7 +1545,7 @@ function profileManager() {
         };
         const back = document.createElement('button'); back.className = 'ghost'; back.textContent = '‹ Back';
         back.onclick = listView;
-        card.append(nameIn, picks, save, back);
+        card.append(nameIn, picks, cpicks, save, back);
     };
     listView();
 }
@@ -1596,7 +1644,8 @@ function renderSettings() {
     body.appendChild(sectionText('SETTINGS'));
     const st = pstate();
     const shelves = (st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES;
-    body.appendChild(settingRow('Home screen', `${shelves.length} shelves`, () => shelfPicker()));
+    body.appendChild(settingRow('Shelves', `${shelves.length} shelves`, () => shelfPicker()));
+    body.appendChild(settingRow('Reorder shelves', 'Set the order they show on Home', () => shelfReorder()));
     body.appendChild(settingRow('Blur unwatched episode images', PREF('blur', false) ? 'On' : 'Off',
         () => { SETPREF('blur', !PREF('blur', false)); renderSettings(); }));
     body.appendChild(settingRow('Show titles under posters', PREF('titles', true) ? 'On' : 'Off',
@@ -1653,18 +1702,27 @@ function playerSettings() {
         }));
     });
 }
-/** Home-shelf picker: grouped sections of pill chips that flip IN PLACE. */
+// current enabled shelves as an ORDERED array (the user's line-up), valid labels only
+function shelfOrder() {
+    const st = pstate();
+    const src = (st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES;
+    return src.filter(l => CK_CAT.SHELF_CATALOG.some(r => r.label === l));
+}
+/** "Shelves": pick which rows are on (numbered as you pick). Reorder is its own screen. */
 function shelfPicker() {
-    settingsSub('Home shelves', (body) => {
+    settingsSub('Shelves', (body) => {
         const note = document.createElement('p'); note.className = 'muted';
-        note.textContent = 'Click to turn rows on or off — Home updates the moment you go back. For You is always on.';
+        note.textContent = 'Turn rows on or off — the number shows where each lands on Home. For You is always on. Reorder them in Settings → Reorder shelves.';
         body.appendChild(note);
         const st = pstate();
-        const enabled = new Set((st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES);
-        const persist = () => {
-            st.shelves = CK_CAT.SHELF_CATALOG.map(r => r.label).filter(l => enabled.has(l));
-            pushAccount();
-        };
+        const order = shelfOrder();
+        const chips = [];
+        const persist = () => { st.shelves = order.slice(); pushAccount(); };
+        const repaint = () => chips.forEach(({ el, label }) => {
+            const i = order.indexOf(label);
+            el.className = 'chip shelf' + (i >= 0 ? ' on' : '');
+            el.textContent = (i >= 0 ? (i + 1) + '. ' : '') + label;
+        });
         const G = CK_CAT.SHELF_GROUPS;
         const inG = (label, g) => G[g].includes(label);
         const section = (title, rows) => {
@@ -1673,10 +1731,12 @@ function shelfPicker() {
             const wrap = document.createElement('div'); wrap.className = 'chip-grid';
             for (const r of rows) {
                 const chip = document.createElement('button');
-                const paint = () => { chip.className = 'chip shelf' + (enabled.has(r.label) ? ' on' : ''); };
-                chip.textContent = r.label;
-                chip.onclick = () => { enabled.has(r.label) ? enabled.delete(r.label) : enabled.add(r.label); persist(); paint(); };
-                paint();
+                chip.onclick = () => {
+                    const i = order.indexOf(r.label);
+                    if (i >= 0) order.splice(i, 1); else order.push(r.label);
+                    persist(); repaint();
+                };
+                chips.push({ el: chip, label: r.label });
                 wrap.appendChild(chip);
             }
             body.appendChild(wrap);
@@ -1687,6 +1747,45 @@ function shelfPicker() {
         section('STREAMING SERVICES', all.filter(r => inG(r.label, 'providers')));
         section('CHANNELS & ANIME', all.filter(r => inG(r.label, 'channels')));
         section('GENRES', all.filter(r => inG(r.label, 'genres')));
+        repaint();
+    });
+}
+/** "Reorder shelves": drag rows up/down to set the Home order. Persists + syncs. */
+function shelfReorder() {
+    settingsSub('Reorder shelves', (body) => {
+        const note = document.createElement('p'); note.className = 'muted';
+        note.textContent = 'Drag a shelf to change where it shows on Home. For You always stays on top.';
+        body.appendChild(note);
+        const st = pstate();
+        let order = shelfOrder();
+        const persist = () => { st.shelves = order.slice(); pushAccount(); };
+        const list = document.createElement('div'); list.className = 'reorder-list';
+        let dragEl = null;
+        const render = () => {
+            list.innerHTML = '';
+            if (!order.length) { list.innerHTML = '<p class="muted">No shelves on yet — add some in Settings → Shelves.</p>'; return; }
+            order.forEach((label, i) => {
+                const row = document.createElement('div'); row.className = 'reorder-row'; row.draggable = true;
+                row.innerHTML = `<span class="grip">⋮⋮</span><span class="num">${i + 1}.</span><span>${label}</span>`;
+                row.dataset.label = label;
+                row.addEventListener('dragstart', () => { dragEl = row; row.classList.add('dragging'); });
+                row.addEventListener('dragend', () => { row.classList.remove('dragging'); dragEl = null; });
+                row.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    if (!dragEl || dragEl === row) return;
+                    const rows = [...list.querySelectorAll('.reorder-row')];
+                    const from = rows.indexOf(dragEl), to = rows.indexOf(row);
+                    if (from < 0 || to < 0) return;
+                    order.splice(to, 0, order.splice(from, 1)[0]);
+                    persist(); render();
+                });
+                // touch fallback (phones): tap moves the row up one; long-press-free + simple
+                row.addEventListener('click', () => { if (i > 0) { order.splice(i - 1, 0, order.splice(i, 1)[0]); persist(); render(); } });
+                list.appendChild(row);
+            });
+        };
+        render();
+        body.appendChild(list);
     });
 }
 function addonsPage() {

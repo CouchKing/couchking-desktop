@@ -293,6 +293,15 @@ select:focus, select:hover { border-color:var(--accent); }
 .avatar-pick { display:flex; gap:.4rem; flex-wrap:wrap; max-width:340px; }
 .avatar-pick button { font-size:1.3rem; background:var(--card2); padding:.4rem .6rem; }
 .avatar-pick button.on { background:var(--accent); }
+.color-pick { display:flex; gap:.5rem; flex-wrap:wrap; max-width:340px; margin:.5rem 0; }
+.color-pick button { width:34px; height:34px; border-radius:50%; border:2px solid transparent; cursor:pointer; opacity:.6; }
+.color-pick button.on { border-color:#fff; opacity:1; }
+/* drag-to-reorder shelves */
+.reorder-list { display:flex; flex-direction:column; gap:.4rem; max-width:520px; }
+.reorder-row { display:flex; align-items:center; gap:.6rem; background:var(--card2); border-radius:10px; padding:.6rem .8rem; cursor:grab; }
+.reorder-row.dragging { opacity:.5; }
+.reorder-row .grip { color:var(--muted); font-size:1.1rem; }
+.reorder-row .num { color:var(--muted); min-width:1.4rem; }
 
 /* sign-in prompt overlay (guest tries to play / save) */
 #gate { position:fixed; inset:0; background:#000B; display:flex; align-items:center; justify-content:center; z-index:90; }
