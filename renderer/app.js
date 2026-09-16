@@ -1789,22 +1789,24 @@ function shelfReorder() {
                 if (e.target.tagName === 'BUTTON') return;
                 e.preventDefault();
                 dragEl = row; row.classList.add('dragging');
-                try { row.setPointerCapture(e.pointerId); } catch (_) {}
+                // document-level listeners fire no matter what's under the pointer AND survive
+                // moving the dragged element in the DOM (setPointerCapture gets released on a
+                // DOM move in Chrome — that's what killed the drag). (AJ Sep 15)
                 const move = (ev) => {
-                    const y = ev.clientY;
-                    const after = rowUnder(y);
+                    const after = rowUnder(ev.clientY);
                     if (after) list.insertBefore(dragEl, after); else list.appendChild(dragEl);
                 };
                 const end = () => {
-                    row.classList.remove('dragging'); dragEl = null;
-                    row.removeEventListener('pointermove', move);
-                    row.removeEventListener('pointerup', end);
-                    row.removeEventListener('pointercancel', end);
+                    if (dragEl) dragEl.classList.remove('dragging');
+                    dragEl = null;
+                    document.removeEventListener('pointermove', move);
+                    document.removeEventListener('pointerup', end);
+                    document.removeEventListener('pointercancel', end);
                     commitFromDOM();
                 };
-                row.addEventListener('pointermove', move);
-                row.addEventListener('pointerup', end);
-                row.addEventListener('pointercancel', end);
+                document.addEventListener('pointermove', move);
+                document.addEventListener('pointerup', end);
+                document.addEventListener('pointercancel', end);
             });
             return row;
         };
