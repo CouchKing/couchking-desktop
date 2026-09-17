@@ -189,7 +189,11 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
         // the steady .ts feed sidesteps panel HLS sessions that reset mid-play (the
         // "skipped forward then froze" class) — livePlay prefers it via mpegts.js
         const tsUrl = streams.find(x => x.ts)?.url || '';
-        const urls = streams.filter(x => !x.ts).map(x => x.url);
+        let urls = streams.filter(x => !x.ts).map(x => x.url);
+        // 24/7 loop channels ARE the broken-session class (Buffy, Gunsmoke — AJ's exact
+        // freezes): skip their HLS entirely, straight to the server hub feed, which also
+        // walks the FREE feeds for these shows when the panel's copy is dead
+        if (tsUrl && /^cklive:(en-)?24-7-/.test(String(id))) urls = [];
         // tuning-screen extras from the guide cache: channel logo + what they're about to
         // watch (AJ Sep 17 "loading screen … that they are going to watch")
         const ci = (_lvGuideCache.d?.channels || []).find(c => 'cklive:' + c.id === id);
