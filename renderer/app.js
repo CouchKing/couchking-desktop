@@ -167,6 +167,11 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
         const nowP = ci?.progs?.find(p => p.s <= Date.now() && p.e > Date.now());
         await ckPlay({ live: true, url: urls[0], title: name, backups: urls.slice(1),
                        logo: ci?.logo || '', now: nowP?.t || '',
+                       chid: id, fav: _lvIsFav(id), isFav: _lvIsFav,
+                       onFav: async (cid, on) => {
+                           await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(String(cid).replace(/^cklive:/, ''))}&on=${on ? 1 : 0}`, { method: 'POST' });
+                           _lvGuideCache.at = 0;
+                       },
                        guide: guideList, onTune: async (cid) => (await _lvTune(cid))[0] });
     } finally { busyEl?.classList.remove('busy'); }
 }
@@ -292,7 +297,18 @@ async function lvRenderBanner(el) {
     el.innerHTML = h;
     el.querySelectorAll('[data-ch]').forEach(c => c.onclick = () => _lvPlayCh(c.dataset.ch, c.dataset.n, [], c));
 }
-// one channel row: logo | now-playing + progress | next | ▶  (used by section + catalog views)
+// favorite toggle from anywhere a row shows (AJ Sep 17: "favorite … if i search it
+// because its hard to find") — server remembers per key, guide pins them
+async function _lvFavToggle(chid, btn) {
+    const id = String(chid).replace(/^cklive:/, '');
+    const on = !btn.classList.contains('on');
+    btn.classList.toggle('on', on);
+    btn.textContent = on ? '★' : '☆';
+    await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(id)}&on=${on ? 1 : 0}`, { method: 'POST' });
+    _lvGuideCache.at = 0;   // guide + favorites list refresh next render
+}
+const _lvIsFav = chid => (_lvGuideCache.d?.favs || []).includes(String(chid).replace(/^cklive:/, ''));
+// one channel row: logo | now-playing + progress | next | ★ | ▶  (sections, search, favs)
 function _lvRow(grid, m, guideList) {
     const fmtT = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     const g = m.ckGuide || {};
@@ -306,7 +322,11 @@ function _lvRow(grid, m, guideList) {
         <div class="lvg-times"></div>
       </div>
       <div class="lvg-next"></div>
+      <button class="lvg-play lvg-favb${_lvIsFav(m.id) ? ' on' : ''}" style="margin-right:6px">${_lvIsFav(m.id) ? '★' : '☆'}</button>
       <button class="lvg-play">▶</button>`;
+    const fb = r.querySelector('.lvg-favb');
+    if (fb.classList.contains('on')) fb.style.color = '#f5c542';
+    fb.onclick = (ev) => { ev.stopPropagation(); _lvFavToggle(m.id, fb); fb.style.color = fb.classList.contains('on') ? '#f5c542' : ''; };
     r.querySelector('.lvg-chname').textContent = m.name;
     if (g.now) {
         r.querySelector('.lvg-title').textContent = g.now.t;
@@ -328,7 +348,7 @@ async function livetvPage() {
     // catalog extras. USA: Sports/News/Kids/Movies/Entertainment · UK: Sky Sports/EFL/News…
     const gd = await lvGuideData();
     const secs = gd ? [...new Set(gd.channels.map(c => c.section).filter(Boolean))] : [];
-    const genres = ['Guide', ...secs, ...(lvRegion ? [] : ['Local', '24/7']), 'All Channels'];
+    const genres = ['Guide', '★ Favorites', ...secs, ...(lvRegion ? [] : ['Local', '24/7']), 'All Channels'];
     chips.innerHTML = '';
     for (const g of genres) {
         const b = document.createElement('button');
@@ -363,6 +383,17 @@ async function livetvPage() {
     chips.appendChild(sin);
     if (lvGenre === 'Guide') return lvRenderGuide(grid);
     const now = Date.now();
+    if (lvGenre === '★ Favorites') {
+        // full channel objects ride in guide.json favChannels — region-independent
+        const chans = gd?.favChannels || [];
+        grid.innerHTML = chans.length ? '' : '<div class="lv-loading">No favorites yet — hit the ★ on any channel (search finds the hidden ones).</div>';
+        const guideList = chans.map(c => ({ id: 'cklive:' + c.id, name: c.name, now: (c.progs.find(p => p.s <= now && p.e > now) || {}).t || '' }));
+        for (const c of chans) {
+            const nowP = c.progs.find(p => p.s <= now && p.e > now), nextP = c.progs.find(p => p.s > now);
+            _lvRow(grid, { id: 'cklive:' + c.id, name: c.name, poster: c.logo, ckGuide: { now: nowP, next: nextP } }, guideList);
+        }
+        return;
+    }
     if (secs.includes(lvGenre)) {
         // section view straight from guide data — instant, region-aware, no extra fetch
         const chans = gd.channels.filter(c => c.section === lvGenre);

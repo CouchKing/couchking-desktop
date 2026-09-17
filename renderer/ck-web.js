@@ -562,7 +562,8 @@
     // LIVE TV (Sep 17): endless HLS channels play natively — Safari has HLS built in,
     // everywhere else hls.js attaches to the same <video>. No /webplay remux (that path is
     // for files), no seeking, auto-failover to the channel's backup urls on fatal error.
-    async function livePlay({ url, title, backups = [], guide = [], onTune = null, logo = '', now = '' }) {
+    async function livePlay({ url, title, backups = [], guide = [], onTune = null, logo = '', now = '',
+                              chid = '', fav = false, onFav = null, isFav = null }) {
         closePlayer(false);
         engine = 'web';
         state = { offset: 0, dur: 0 };
@@ -578,6 +579,7 @@
               <div class="wp-bottom">
                 <div class="wp-controls">
                   <div class="wp-cell"><span>Play / Pause</span><button class="wp-btn wp-pp">⏸</button></div>
+                  <div class="wp-cell"><span>Favorite</span><button class="wp-btn wp-fav">☆</button></div>
                   <div class="wp-cell"><span>Guide</span><button class="wp-btn wp-guide">📋</button></div>
                   <div class="wp-cell"><span>Volume</span><input class="wp-vol" type="range" min="0" max="1" step=".05" value="1"></div>
                   <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">⛶</button></div>
@@ -667,6 +669,7 @@
                             if (!u) return;
                             si = 0; sources.length = 0; sources.push(u);
                             player.querySelector('.wp-title').textContent = ch.name;
+                            curCh = ch.id; curFav = !!(isFav && isFav(ch.id)); paintFav();
                             showOv(ch.name, ch.now); armDog();
                             await attach(u);
                         } finally { r.classList.remove('busy'); }
@@ -676,6 +679,14 @@
                 gp.classList.remove('hidden');
             };
         } else gbtn.parentElement.style.display = 'none';
+        // ★ the channel you're WATCHING (AJ Sep 17) — state follows in-player channel hops
+        const favB = player.querySelector('.wp-fav');
+        let curCh = chid, curFav = !!fav;
+        const paintFav = () => { favB.textContent = curFav ? '★' : '☆'; favB.style.color = curFav ? '#f5c542' : ''; };
+        if (onFav && chid) {
+            paintFav();
+            favB.onclick = () => { curFav = !curFav; paintFav(); onFav(curCh, curFav); };
+        } else favB.parentElement.style.display = 'none';
         const pp = player.querySelector('.wp-pp');
         pp.onclick = () => { if (v.paused) { v.play(); pp.textContent = '⏸'; } else { v.pause(); pp.textContent = '▶'; } };
         player.querySelector('.wp-vol').oninput = (e) => v.volume = +e.target.value;
