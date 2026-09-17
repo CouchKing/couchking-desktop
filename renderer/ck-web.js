@@ -631,7 +631,12 @@
             stallT = setTimeout(() => {
                 if (!state) return;
                 showOv(player.querySelector('.wp-title').textContent, '');
-                if (tsCur) playTs(tsCur); else attach(sources[si] || sources[0]);
+                // first stall: fresh HLS session. Stalling AGAIN within 90s: the HLS is
+                // sick — switch to the server-side pump feed.
+                const nowMs = Date.now();
+                if (tsCur && state._lastStall && nowMs - state._lastStall < 90e3) playTs(tsCur);
+                else attach(sources[si] || sources[0]);
+                if (state) state._lastStall = nowMs;
                 armDog();
             }, 12000);
         });
@@ -689,7 +694,9 @@
             else { ovSpin.style.display = 'none'; ovName.textContent = 'This channel is down right now'; ovNow.textContent = 'Try another one — this one gets benched so it stops showing up';
                    setTimeout(() => { if (!tuned) bail(); }, 3000); }
         }, 12000); };
-        if (!(tsCur && await playTs(tsCur))) { if (sources[0]) await attach(sources[0]); }
+        // HLS FIRST (Sep 17 rollback: preferring the panel's direct .ts froze EVERY
+        // channel — their raw feed is the broken part). .ts hub = fallback only.
+        if (sources[0]) await attach(sources[0]); else if (tsCur) await playTs(tsCur);
         armDog();
         const bail = () => { clearTimeout(dogT); clearTimeout(stallT); stopMp(); try { state?.hls?.destroy(); } catch {} engine = null; closePlayer(false); };
         player.querySelector('.wp-back').onclick = bail;
@@ -724,7 +731,7 @@
                             player.querySelector('.wp-title').textContent = ch.name;
                             curCh = ch.id; curFav = !!(isFav && isFav(ch.id)); paintFav();
                             showOv(ch.name, ch.now); armDog();
-                            if (!(ts2 && await playTs(ts2))) await attach(sources[0]);
+                            if (sources[0]) await attach(sources[0]); else if (ts2) await playTs(ts2);
                         } finally { r.classList.remove('busy'); }
                     };
                     gp.appendChild(r);

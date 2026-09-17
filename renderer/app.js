@@ -346,11 +346,14 @@ function _lvRow(grid, m, guideList) {
     const g = m.ckGuide || {};
     const r = document.createElement('div'); r.className = 'lvg-chrow';
     const pct = g.now?.s && g.now?.e ? Math.min(100, Math.max(0, 100 * (Date.now() - g.now.s) / (g.now.e - g.now.s))) : 0;
+    // every row keeps its progress bar, but marathon 24/7 "programmes" (>4h) get a DIM
+    // one — full-bright near-full bars stacked up read as one giant solid line
+    const longProg = g.now?.s && g.now?.e && (g.now.e - g.now.s) >= 4 * 3600e3;
     r.innerHTML = `
       <div class="lvg-ch">${m.poster ? `<img loading="lazy" src="${m.poster}" onerror="this.style.display='none'">` : ''}<span class="lvg-chname"></span></div>
       <div class="lvg-prog">
         <div class="lvg-title">${g.now ? '' : '<span class="lvg-dim">Live programming</span>'}</div>
-        ${g.now ? `<div class="lvg-bar"><div class="lvg-fill" style="width:${pct}%"></div></div>` : ''}
+        ${g.now ? `<div class="lvg-bar"><div class="lvg-fill" style="width:${pct}%${longProg ? ';opacity:.3' : ''}"></div></div>` : ''}
         <div class="lvg-times"></div>
       </div>
       <div class="lvg-next"></div>
