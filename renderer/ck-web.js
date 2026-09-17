@@ -614,7 +614,19 @@
         const showOv = (nm, nw) => { tuned = false; ovName.textContent = 'Tuning ' + (nm || 'channel') + '…';
             ovNow.textContent = nw ? 'Now: ' + nw : ''; ovSpin.style.display = ''; ov.style.display = 'flex'; };
         showOv(title, now);
-        v.addEventListener('playing', () => { tuned = true; clearTimeout(dogT); ov.style.display = 'none'; });
+        v.addEventListener('playing', () => { tuned = true; clearTimeout(dogT); clearTimeout(stallT); ov.style.display = 'none'; });
+        // MID-PLAY stall heal (AJ Sep 17 Buffy "freezes after 7 seconds"): panel sessions
+        // die under the player — stuck >12s → re-attach = fresh upstream session
+        let stallT = 0;
+        v.addEventListener('waiting', () => {
+            if (!tuned || !state) return;
+            clearTimeout(stallT);
+            stallT = setTimeout(() => {
+                if (!state) return;
+                showOv(player.querySelector('.wp-title').textContent, '');
+                attach(sources[si] || sources[0]); armDog();
+            }, 12000);
+        });
         const sources = [url, ...backups];
         let si = 0;
         const attach = async (u) => {
