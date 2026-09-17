@@ -445,3 +445,6 @@ select:focus, select:hover { border-color:var(--accent); }
 .epg-sec { font-size: .78rem; font-weight: 700; color: #a08ef0; text-transform: uppercase; letter-spacing: .05em; padding: .35rem .55rem; }
 .epg-seclane { height: 28px; background: #1b1636; }
 .epg-more { padding: .7rem; text-align: center; }
+/* long channel/programme names stay INSIDE their card (AJ Sep 17 "flo thing running out of the box") */
+.lvcw-card > div { min-width: 0; max-width: 230px; }
+.lvcw-n, .lvcw-p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
