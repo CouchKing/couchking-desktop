@@ -197,7 +197,9 @@ function removeContinue(t, el) {
     if (S.guest) return;
     const st = pstate();
     st.continue = (st.continue || []).filter(x => x.id !== t.id);
-    st.removedTs = stamp(st.removedTs, t.id);
+    // cw:-scoped (Sep 17): hiding from Continue Watching must NOT delete the watched
+    // mark / library entry — the old bare-id tombstone nuked all three lists on merge
+    st.removedTs = stamp(st.removedTs, 'cw:' + t.id);
     // clear-progress tombstones so the removal reaches every device (server merge rule)
     const pos = st.positions || {};
     for (const k of Object.keys(pos)) if (k === t.id || k.startsWith(t.id + ':')) {
@@ -810,8 +812,8 @@ async function fixEpThumbs(meta) {
 function toggleEpWatched(key) {
     const st = pstate(); st.watchedIds = st.watchedIds || [];
     const i = st.watchedIds.indexOf(key);
-    if (i >= 0) { st.watchedIds.splice(i, 1); st.removedTs = stamp(st.removedTs, key); }
-    else { st.watchedIds.push(key); st.addedTs = stamp(st.addedTs, key); }
+    if (i >= 0) { st.watchedIds.splice(i, 1); st.removedTs = stamp(st.removedTs, 'wt:' + key); }
+    else { st.watchedIds.push(key); st.addedTs = stamp(st.addedTs, key); st.addedTs = stamp(st.addedTs, 'wt:' + key); }
     pushAccount();
 }
 
@@ -1217,13 +1219,14 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
         if (watchedNow) {
             if (p.s) {   // episode → checkmark (blur-clear + eye sync to every device)
                 st.watchedIds = st.watchedIds || [];
-                if (!st.watchedIds.includes(p.sid)) { st.watchedIds.push(p.sid); st.addedTs = stamp(st.addedTs, p.sid); }
+                if (!st.watchedIds.includes(p.sid)) { st.watchedIds.push(p.sid); st.addedTs = stamp(st.addedTs, p.sid); st.addedTs = stamp(st.addedTs, 'wt:' + p.sid); }
             } else {     // a FINISHED movie leaves Continue Watching (real finish only)
                 st.watchedIds = st.watchedIds || [];
-                if (!st.watchedIds.includes(p.imdb)) { st.watchedIds.push(p.imdb); st.addedTs = stamp(st.addedTs, p.imdb); }
+                if (!st.watchedIds.includes(p.imdb)) { st.watchedIds.push(p.imdb); st.addedTs = stamp(st.addedTs, p.imdb); st.addedTs = stamp(st.addedTs, 'wt:' + p.imdb); }
                 st.watchedTitles = [{ id: p.imdb, type: 'movie', name: cur?.meta?.name || p.label, poster: cur?.meta?.poster || '' },
                     ...(st.watchedTitles || []).filter(x => x.id !== p.imdb)].slice(0, 60);
                 st.continue = (st.continue || []).filter(x => x.id !== p.imdb);
+                st.removedTs = stamp(st.removedTs, 'cw:' + p.imdb);   // leave CW without touching the mark
                 st.removedTs = stamp(st.removedTs, 'pos:' + p.imdb);
                 delete st.positions[p.imdb];
             }
@@ -1592,19 +1595,20 @@ function pushContinueLocal(t) {
     st.continue = [{ id: t.id, type: t.type, name: t.name, poster: t.poster || '' },
         ...(st.continue || []).filter(x => x.id !== t.id)].slice(0, 12);
     st.addedTs = stamp(st.addedTs, t.id);
+    st.addedTs = stamp(st.addedTs, 'cw:' + t.id);   // a rewatch brings a hidden CW item back
 }
 function toggleList(t) {
     const st = pstate(); st.watchlist = st.watchlist || [];
     const has = st.watchlist.some(x => x.id === t.id);
-    if (has) { st.watchlist = st.watchlist.filter(x => x.id !== t.id); st.removedTs = stamp(st.removedTs, t.id); }
-    else { st.watchlist.unshift({ id: t.id, type: t.type, name: t.name, poster: t.poster || '' }); st.addedTs = stamp(st.addedTs, t.id); }
+    if (has) { st.watchlist = st.watchlist.filter(x => x.id !== t.id); st.removedTs = stamp(st.removedTs, 'wl:' + t.id); }
+    else { st.watchlist.unshift({ id: t.id, type: t.type, name: t.name, poster: t.poster || '' }); st.addedTs = stamp(st.addedTs, t.id); st.addedTs = stamp(st.addedTs, 'wl:' + t.id); }
     pushAccount(); return !has;
 }
 function toggleWatchedTitle(t) {
     const st = pstate(); st.watchedIds = st.watchedIds || []; st.watchedTitles = st.watchedTitles || [];
     const has = st.watchedIds.includes(t.id);
-    if (has) { st.watchedIds = st.watchedIds.filter(x => x !== t.id); st.watchedTitles = st.watchedTitles.filter(x => x.id !== t.id); st.removedTs = stamp(st.removedTs, t.id); }
-    else { st.watchedIds.push(t.id); st.watchedTitles.unshift({ id: t.id, type: t.type, name: t.name, poster: t.poster || '' }); st.addedTs = stamp(st.addedTs, t.id); }
+    if (has) { st.watchedIds = st.watchedIds.filter(x => x !== t.id); st.watchedTitles = st.watchedTitles.filter(x => x.id !== t.id); st.removedTs = stamp(st.removedTs, 'wt:' + t.id); }
+    else { st.watchedIds.push(t.id); st.watchedTitles.unshift({ id: t.id, type: t.type, name: t.name, poster: t.poster || '' }); st.addedTs = stamp(st.addedTs, t.id); st.addedTs = stamp(st.addedTs, 'wt:' + t.id); }
     pushAccount(); return !has;
 }
 
