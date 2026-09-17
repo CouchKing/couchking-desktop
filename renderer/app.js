@@ -103,11 +103,19 @@ async function bootstrap() {
     S.state = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`) || {};
     S.addons = S.state.addons || [];
     if (!S.addons.length && acc?.allowed && acc.addon) S.addons = [{ url: acc.addon, name: 'CouchKing' }];
-    // subKey rides inside the addon url ({"subKey":"CKG-…"} url-encoded)
-    try {
-        const seg = decodeURIComponent(new URL(S.addons[0].url).pathname.split('/')[1]);
-        S.subKey = JSON.parse(seg).subKey || '';
-    } catch {}
+    // subKey rides inside the addon url ({"subKey":"CKG-…"} url-encoded) — scan EVERY
+    // path segment of EVERY addon: stream.couchking.app urls have an /a/ prefix before
+    // the config, so segment[1] was the literal "a" → empty key → /live//guide.json 404
+    // = "guide never loads" (AJ Sep 17, kruz account)
+    S.subKey = '';
+    for (const a of (S.addons || [])) {
+        if (S.subKey) break;
+        try {
+            for (const seg of new URL(a.url).pathname.split('/')) {
+                try { const k = JSON.parse(decodeURIComponent(seg)).subKey; if (k) { S.subKey = k; break; } } catch {}
+            }
+        } catch {}
+    }
     const savedPid = localStorage.getItem('ck-pid');
     const profs = S.state.profiles || [];
     S.pid = profs.find(p => p.id === savedPid)?.id || profs[0]?.id || '';
@@ -121,7 +129,275 @@ async function bootstrap() {
     applyAccountPrefs();
     lastSyncSig = syncSig();
     show('main'); home();
+    livetvDetect();
 }
+
+// LIVE TV exists only when the installed addon's manifest carries a type:'tv' catalog —
+// the shell itself is neutral (AJ Sep 17: "only pops up if you add my addon")
+async function livetvDetect() {
+    let failed = false;
+    try {
+        S.liveCat = null;
+        for (const a of (S.addons || [])) {
+            const m = await j(a.url + '/manifest.json');
+            if (!m) { failed = true; continue; }   // addon restarting ≠ no Live TV on plan
+            const c = (m?.catalogs || []).find(x => x.type === 'tv');
+            if (c) { S.liveCat = { base: a.url, cat: c }; break; }
+        }
+    } catch { S.liveCat = null; failed = true; }
+    $('rail-livetv')?.classList.toggle('hidden', !S.liveCat);
+    // a failed manifest fetch mid-boot must not hide the tab until the next full page
+    // reload (AJ hit exactly this during an addon restart) — quietly retry
+    if (failed && !S.liveCat) setTimeout(livetvDetect, 30e3);
+}
+
+let lvGenre = 'Guide';
+const _lvTune = async (id) => {   // id = full meta id (cklive:espn)
+    const s = await j(S.liveCat.base + `/stream/tv/${encodeURIComponent(id)}.json`);
+    return (s?.streams || []).map(x => x.url);
+};
+async function _lvPlayCh(id, name, guideList, busyEl) {
+    busyEl?.classList.add('busy');
+    try {
+        const urls = await _lvTune(id);
+        if (!urls.length) { toast('Channel is offline right now'); return; }
+        // tuning-screen extras from the guide cache: channel logo + what they're about to
+        // watch (AJ Sep 17 "loading screen … that they are going to watch")
+        const ci = (_lvGuideCache.d?.channels || []).find(c => 'cklive:' + c.id === id);
+        const nowP = ci?.progs?.find(p => p.s <= Date.now() && p.e > Date.now());
+        await ckPlay({ live: true, url: urls[0], title: name, backups: urls.slice(1),
+                       logo: ci?.logo || '', now: nowP?.t || '',
+                       guide: guideList, onTune: async (cid) => (await _lvTune(cid))[0] });
+    } finally { busyEl?.classList.remove('busy'); }
+}
+// ---- CLASSIC GUIDE GRID (AJ Sep 17 "like im on a classic tv box"): sticky channel column,
+// 6h timeline, program blocks, red now-line, ★ favorites pinned on top, Continue Watching
+// strip from the channels this key actually tunes. Data = addon /live/<key>/guide.json.
+let _lvGuideCache = { at: 0, d: null };
+let lvDay = 0;   // guide day tab: 0=Today 1=Tomorrow 2=day after
+let lvShowAll = false;   // guide renders 150 rows fast, expands on demand
+async function lvGuideData() {   // one fetch per region per minute, shared by guide + section chips
+    let d = _lvGuideCache.r === lvRegion ? _lvGuideCache.d : null;
+    if (!d || Date.now() - _lvGuideCache.at > 55e3) {
+        d = await j(`${SERVICE}/live/${S.subKey}/guide.json${lvRegion ? '?r=' + lvRegion : ''}`);
+        if (d?.channels?.length) _lvGuideCache = { at: Date.now(), d, r: lvRegion };
+    }
+    return _lvGuideCache.r === lvRegion ? _lvGuideCache.d : null;
+}
+async function lvRenderGuide(grid) {
+    const d = await lvGuideData();
+    if (!d?.channels?.length) {   // addon mid-restart or first boot — auto-retry, never dead-end
+        grid.innerHTML = '<div class="lv-loading">Loading the guide…</div>';
+        setTimeout(() => { if (page === 'livetv' && lvGenre === 'Guide') lvRenderGuide(grid); }, 3000);
+        return;
+    }
+    const favs = new Set(d.favs || []);
+    const now = Date.now(), SLOTW = 260;
+    // day tabs (AJ: "scroll through the guide and see upcoming stuff"): Today = from the
+    // current half hour; future days = full day from 6 AM. EPG feed carries ~3 days.
+    const dayStart = (offset) => { const dt = new Date(now + offset * 86400e3); dt.setHours(offset ? 6 : 0, 0, 0, 0);
+        return offset ? dt.getTime() : Math.floor(now / 1800e3) * 1800e3; };
+    const t0 = dayStart(lvDay), SLOTS = lvDay ? 36 : 48, tEnd = t0 + SLOTS * 1800e3;
+    const fmtT = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const x = ms => Math.max(0, (ms - t0) / 1800e3 * SLOTW);
+    const chans = d.channels;
+    const guideList = chans.map(c => ({ id: 'cklive:' + c.id, name: c.name, now: (c.progs.find(p => p.s <= now && p.e > now) || {}).t || '' }));
+    const rec = (d.recent || []).map(id => d.channels.find(c => c.id === id)).filter(Boolean);
+    const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    let h = '<div class="lv-days">' + [0, 1, 2].map(o => {
+        const label = o === 0 ? 'Today' : o === 1 ? 'Tomorrow'
+            : new Date(now + o * 86400e3).toLocaleDateString('en-US', { weekday: 'long' });
+        return `<button class="lv-chip${o === lvDay ? ' on' : ''}" data-day="${o}">${label}</button>`;
+    }).join('') + '</div>';
+    if (rec.length && lvDay === 0) {
+        h += `<div class="lvcw"><div class="lvcw-t">Continue watching — Live TV</div><div class="lvcw-row">` + rec.map(c => {
+            const nowP = c.progs.find(p => p.s <= now && p.e > now);
+            return `<div class="lvcw-card" data-ch="${esc(c.id)}" data-n="${esc(c.name)}">${c.logo ? `<img src="${esc(c.logo)}" onerror="this.style.display='none'">` : ''}<div><div class="lvcw-n">${esc(c.name)}</div><div class="lvcw-p">${esc(nowP?.t || 'Live')}</div></div></div>`;
+        }).join('') + `</div></div>`;
+    }
+    let ticks = '';
+    for (let i = 0; i < SLOTS; i++) ticks += `<div class="epg-tick" style="width:${SLOTW}px">${fmtT(t0 + i * 1800e3)}</div>`;
+    h += `<div class="epg"><div class="epg-scroll"><div class="epg-hrow"><div class="epg-ch epg-corner">Channel</div><div class="epg-lane" style="width:${SLOTS * SLOTW}px">${ticks}</div></div>`;
+    const rowHtml = (c) => {
+        const progs = (c.progs || []).filter(p => p.e > t0 && p.s < tEnd);
+        let blocks = '';
+        if (progs.length) for (const p of progs) {
+            const l = x(p.s), r = Math.min(x(p.e), SLOTS * SLOTW);
+            const on = p.s <= now && p.e > now;
+            blocks += `<div class="epg-block${on ? ' on' : ''}" style="left:${l}px;width:${Math.max(r - l - 4, 40)}px" title="${esc(p.t)} (${fmtT(p.s)}–${fmtT(p.e)})"><div class="epg-bt">${esc(p.t)}</div><div class="epg-bs">${fmtT(p.s)}</div></div>`;
+        }
+        else blocks = `<div class="epg-block dim" style="left:0;width:${SLOTS * SLOTW - 4}px"><div class="epg-bt">${lvDay ? 'No guide data for this day' : 'Live programming'}</div></div>`;
+        return `<div class="epg-row" data-ch="${esc(c.id)}" data-n="${esc(c.name)}">
+            <div class="epg-ch"><span class="epg-fav${favs.has(c.id) ? ' on' : ''}" data-fav="${esc(c.id)}">★</span>${c.logo ? `<img loading="lazy" src="${esc(c.logo)}" onerror="this.style.display='none'">` : ''}<span class="epg-cn">${esc(c.name)}</span></div>
+            <div class="epg-lane" style="width:${SLOTS * SLOTW}px">${lvDay ? '' : `<div class="epg-nowline" style="left:${x(now)}px"></div>`}${blocks}</div></div>`;
+    };
+    const secHdr = (t) => `<div class="epg-sechdr"><div class="epg-ch epg-sec">${esc(t)}</div><div class="epg-lane epg-seclane" style="width:${SLOTS * SLOTW}px"></div></div>`;
+    // ★ favorites first as their own section, then the lineup grouped by section
+    // (USA: Sports/News/Kids/Movies/Entertainment; UK/CA: the provider's own sub-groups)
+    const favRows = chans.filter(c => favs.has(c.id));
+    const rest = chans.filter(c => !favs.has(c.id));
+    if (favRows.length) { h += secHdr('★ Favorites'); for (const c of favRows) h += rowHtml(c); }
+    const LIMIT = lvShowAll ? Infinity : 150;
+    let lastSec = null, shown = 0;
+    for (const c of rest) {
+        if (shown >= LIMIT) break;
+        const sec = c.section || 'More Channels';
+        if (sec !== lastSec) { h += secHdr(sec); lastSec = sec; }
+        h += rowHtml(c); shown++;
+    }
+    if (rest.length > shown) h += `<div class="epg-more"><button id="epg-showall" class="lv-chip">Show all ${rest.length} channels</button></div>`;
+    h += `</div></div>`;
+    grid.innerHTML = h;
+    grid.querySelectorAll('[data-day]').forEach(el => el.onclick = (ev) => {
+        ev.stopPropagation(); lvDay = +el.dataset.day; lvRenderGuide(grid);
+    });
+    const sa = grid.querySelector('#epg-showall');
+    if (sa) sa.onclick = (ev) => { ev.stopPropagation(); lvShowAll = true; lvRenderGuide(grid); };
+    grid.querySelectorAll('[data-ch]').forEach(el => el.onclick = (ev) => {
+        if (ev.target.closest('[data-fav]')) return;
+        _lvPlayCh('cklive:' + el.dataset.ch, el.dataset.n, guideList, el);
+    });
+    grid.querySelectorAll('[data-fav]').forEach(el => el.onclick = async (ev) => {
+        ev.stopPropagation();
+        const on = !el.classList.contains('on');
+        el.classList.toggle('on', on);
+        await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(el.dataset.fav)}&on=${on ? 1 : 0}`, { method: 'POST' });
+        _lvGuideCache.at = 0;   // re-pin on next render
+    });
+}
+// LIVE GAMES BANNER (AJ: "live banner with games live now… only if they are active real
+// games, dont just give me more panels"): sport strips appear ONLY when that sport has a
+// live game; one compact Upcoming strip below. Data = /live/<key>/games.json.
+let lvRegion = '';
+async function lvRenderBanner(el) {
+    const d = await j(`${SERVICE}/live/${S.subKey}/games.json`);
+    const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    if (!d?.sports?.length) { el.innerHTML = ''; return; }
+    // REGION-AWARE (AJ Sep 17): Fútbol rides with the UK view (it's not American sports);
+    // USA/UK/CA each see the games on THEIR channels — live strips and upcoming both.
+    const want = lvRegion || 'US';
+    const keep = (sp, g) => sp.sport === 'Fútbol' ? want === 'UK' : (g.rg || 'US') === want;
+    const sports = d.sports.map(sp => ({ ...sp,
+        live: sp.live.filter(g => keep(sp, g)), soon: sp.soon.filter(g => keep(sp, g)) }))
+        .filter(sp => sp.live.length || sp.soon.length);
+    if (!sports.length) { el.innerHTML = ''; return; }
+    let h = '';
+    const card = (g, live) => `<div class="lvb-card${live ? ' live' : ''}" data-ch="${esc(g.chid)}" data-n="${esc(g.t)}">
+        <div class="lvb-t">${esc(g.t)}</div><div class="lvb-m">${live ? '<span class="lvb-dot"></span>LIVE' : esc(g.when)} • ${esc(g.ch)}</div></div>`;
+    for (const sp of sports) if (sp.live.length)
+        h += `<div class="lvb-strip"><div class="lvb-h">${sp.emoji} ${esc(sp.sport)} — <span class="lvb-livehdr">LIVE NOW</span></div><div class="lvb-row">${sp.live.map(g => card(g, true)).join('')}</div></div>`;
+    const soon = sports.flatMap(sp => sp.soon.map(g => ({ ...g, _e: sp.emoji }))).sort((a, b) => a.s - b.s).slice(0, 25);
+    if (soon.length)
+        h += `<div class="lvb-strip"><div class="lvb-h">📅 Upcoming games</div><div class="lvb-row">${soon.map(g => card({ ...g, t: g._e + ' ' + g.t }, false)).join('')}</div></div>`;
+    el.innerHTML = h;
+    el.querySelectorAll('[data-ch]').forEach(c => c.onclick = () => _lvPlayCh(c.dataset.ch, c.dataset.n, [], c));
+}
+// one channel row: logo | now-playing + progress | next | ▶  (used by section + catalog views)
+function _lvRow(grid, m, guideList) {
+    const fmtT = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const g = m.ckGuide || {};
+    const r = document.createElement('div'); r.className = 'lvg-chrow';
+    const pct = g.now?.s && g.now?.e ? Math.min(100, Math.max(0, 100 * (Date.now() - g.now.s) / (g.now.e - g.now.s))) : 0;
+    r.innerHTML = `
+      <div class="lvg-ch">${m.poster ? `<img loading="lazy" src="${m.poster}" onerror="this.style.display='none'">` : ''}<span class="lvg-chname"></span></div>
+      <div class="lvg-prog">
+        <div class="lvg-title">${g.now ? '' : '<span class="lvg-dim">Live programming</span>'}</div>
+        ${g.now ? `<div class="lvg-bar"><div class="lvg-fill" style="width:${pct}%"></div></div>` : ''}
+        <div class="lvg-times"></div>
+      </div>
+      <div class="lvg-next"></div>
+      <button class="lvg-play">▶</button>`;
+    r.querySelector('.lvg-chname').textContent = m.name;
+    if (g.now) {
+        r.querySelector('.lvg-title').textContent = g.now.t;
+        r.querySelector('.lvg-times').textContent = `${fmtT(g.now.s)} – ${fmtT(g.now.e)}`;
+    }
+    if (g.next) r.querySelector('.lvg-next').textContent = `Next: ${g.next.t} • ${fmtT(g.next.s)}`;
+    r.onclick = () => _lvPlayCh(m.id, m.name, guideList, r);
+    grid.appendChild(r);
+}
+async function livetvPage() {
+    if (!S.liveCat) return;
+    const chips = $('livetv-chips'), grid = $('livetv-grid');
+    const sel = $('lv-region');
+    if (sel && !sel._wired) { sel._wired = 1; sel.onchange = () => { lvRegion = sel.value; lvGenre = 'Guide'; lvShowAll = false; livetvPage(); }; }
+    const banner = $('livetv-banner');
+    if (banner) lvRenderBanner(banner);   // async, fills in when ready
+    grid.innerHTML = '<div class="lv-loading">Loading…</div>';
+    // chips = THIS region's real sections (AJ: "where is the separate sport or news") +
+    // catalog extras. USA: Sports/News/Kids/Movies/Entertainment · UK: Sky Sports/EFL/News…
+    const gd = await lvGuideData();
+    const secs = gd ? [...new Set(gd.channels.map(c => c.section).filter(Boolean))] : [];
+    const genres = ['Guide', ...secs, ...(lvRegion ? [] : ['Local', '24/7']), 'All Channels'];
+    chips.innerHTML = '';
+    for (const g of genres) {
+        const b = document.createElement('button');
+        b.className = 'lv-chip' + (g === lvGenre ? ' on' : '');
+        b.textContent = g;
+        b.onclick = () => { lvGenre = g; livetvPage(); };
+        chips.appendChild(b);
+    }
+    // SEARCH channels + shows (AJ Sep 17): server matches channel names AND anything in
+    // the next 24h of guide. Renders into the grid only — the input never rebuilds, so
+    // typing keeps focus.
+    const sin = document.createElement('input');
+    sin.type = 'search'; sin.placeholder = '🔎 Channels & shows';
+    sin.style.cssText = 'background:#1c1c22;border:1px solid #3a3a44;border-radius:16px;padding:6px 14px;color:#fff;min-width:190px;font-size:14px;outline:none';
+    sin.oninput = () => { clearTimeout(sin._t); sin._t = setTimeout(async () => {
+        const qq = sin.value.trim();
+        if (!qq) return livetvPage();
+        const d2 = await j(S.liveCat.base + `/catalog/tv/${S.liveCat.cat.id}/search=${encodeURIComponent(qq)}.json`);
+        if (qq !== sin.value.trim()) return;   // stale response, user kept typing
+        const metas = d2?.metas || [];
+        grid.innerHTML = metas.length ? '' : '<div class="lv-loading">No channels or shows match.</div>';
+        const gl = metas.map(m => ({ id: m.id, name: m.name, now: '' }));
+        for (const m of metas) {
+            _lvRow(grid, m, gl);
+            if (m.ckHit) {   // show-title hit: say WHY this channel matched
+                const el = grid.lastChild.querySelector('.lvg-next');
+                el.textContent = (m.ckHit.live ? '🔴 ON NOW: ' : '📅 ') + m.ckHit.t + (m.ckHit.when ? ' • ' + m.ckHit.when : '');
+                if (m.ckHit.live) el.style.color = '#e64545';
+            }
+        }
+    }, 350); };
+    chips.appendChild(sin);
+    if (lvGenre === 'Guide') return lvRenderGuide(grid);
+    const now = Date.now();
+    if (secs.includes(lvGenre)) {
+        // section view straight from guide data — instant, region-aware, no extra fetch
+        const chans = gd.channels.filter(c => c.section === lvGenre);
+        const guideList = chans.map(c => ({ id: 'cklive:' + c.id, name: c.name, now: (c.progs.find(p => p.s <= now && p.e > now) || {}).t || '' }));
+        grid.innerHTML = chans.length ? '' : '<div class="lv-loading">Nothing here right now.</div>';
+        for (const c of chans) {
+            const nowP = c.progs.find(p => p.s <= now && p.e > now), nextP = c.progs.find(p => p.s > now);
+            _lvRow(grid, { id: 'cklive:' + c.id, name: c.name, poster: c.logo, ckGuide: { now: nowP, next: nextP } }, guideList);
+        }
+        return;
+    }
+    // catalog views (Local / 24⁄7 / All Channels) — server pages of 100 with a Load-more
+    grid.innerHTML = '';
+    let skip = 0, my = ++_lvCatalogGen;
+    const loadPage = async () => {
+        grid.querySelector('.epg-more')?.remove();
+        // Stremio extras ride IN the path segment ("genre=X&skip=100.json"), not the query string
+        const path = `/catalog/tv/${S.liveCat.cat.id}/genre=${encodeURIComponent(lvGenre)}${skip ? '&skip=' + skip : ''}.json`;
+        const d = await j(S.liveCat.base + path);
+        if (my !== _lvCatalogGen) return;   // user switched chips mid-load
+        const metas = d?.metas || [];
+        if (!metas.length && !skip) { grid.innerHTML = '<div class="lv-loading">No channels in this category right now.</div>'; return; }
+        const guideList = metas.map(m => ({ id: m.id, name: m.name, now: (m.description || '').split('\n')[0] }));
+        for (const m of metas) _lvRow(grid, m, guideList);
+        skip += metas.length;
+        if (metas.length === 100) {
+            const more = document.createElement('div'); more.className = 'epg-more';
+            more.innerHTML = `<button class="lv-chip">Load more channels (${skip} shown)</button>`;
+            more.querySelector('button').onclick = loadPage;
+            grid.appendChild(more);
+        }
+    };
+    await loadPage();
+}
+let _lvCatalogGen = 0;
 
 // live sync like the phone/Firestick: re-pull account state every 60s so what you watch
 // on other devices shows up here without a restart. QUIET: the server re-derives the
@@ -155,8 +431,9 @@ let page = 'home';
 function nav(which) {
     page = which;
     document.querySelectorAll('.rail-item.nav').forEach(n => n.classList.toggle('on', n.dataset.nav === which));
-    for (const v of ['home', 'search', 'discover', 'library', 'downloads', 'settings', 'detail', 'person', 'episode'])
+    for (const v of ['home', 'search', 'discover', 'library', 'downloads', 'livetv', 'settings', 'detail', 'person', 'episode'])
         $('view-' + v)?.classList.toggle('hidden', v !== which);
+    if (which === 'livetv') livetvPage();
     if (which === 'search') setTimeout(() => $('search').focus(), 50);
     if (which === 'discover' && !$('discover-rows').childElementCount) discover();
     if (which === 'library') library();
@@ -1529,7 +1806,7 @@ function profileManager() {
             }
             card.appendChild(row);
         }
-        if (profs.length < 3) {
+        if (profs.length < 5) {
             const add = document.createElement('button'); add.className = 'ghost'; add.textContent = '+ Add profile';
             add.onclick = () => editView(null);
             card.appendChild(add);

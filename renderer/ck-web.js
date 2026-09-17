@@ -559,7 +559,139 @@
     // codecs Chromium decodes; anything else (hevc/vc1/mpeg2...) goes straight to mpv.
     // Unknown/blank codec = try the window first — the 12s no-frame fallback still saves it.
     const CHROME_OK = ['', 'h264', 'avc1', 'vp8', 'vp9', 'av1', 'mpeg4', 'mjpeg'];
+    // LIVE TV (Sep 17): endless HLS channels play natively — Safari has HLS built in,
+    // everywhere else hls.js attaches to the same <video>. No /webplay remux (that path is
+    // for files), no seeking, auto-failover to the channel's backup urls on fatal error.
+    async function livePlay({ url, title, backups = [], guide = [], onTune = null, logo = '', now = '' }) {
+        closePlayer(false);
+        engine = 'web';
+        state = { offset: 0, dur: 0 };
+        player = document.createElement('div');
+        player.id = 'web-player';
+        player.innerHTML = `
+            <video autoplay playsinline></video>
+            <div class="wp-ui">
+              <div class="wp-top">
+                <button class="wp-btn wp-back">‹ Back</button><span class="wp-title"></span>
+                <span class="wp-right"><span class="wp-live">🔴 LIVE</span><span class="wp-clock"></span></span>
+              </div>
+              <div class="wp-bottom">
+                <div class="wp-controls">
+                  <div class="wp-cell"><span>Play / Pause</span><button class="wp-btn wp-pp">⏸</button></div>
+                  <div class="wp-cell"><span>Guide</span><button class="wp-btn wp-guide">📋</button></div>
+                  <div class="wp-cell"><span>Volume</span><input class="wp-vol" type="range" min="0" max="1" step=".05" value="1"></div>
+                  <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">⛶</button></div>
+                </div>
+              </div>
+              <div class="lv-guidepanel hidden"></div>
+            </div>`;
+        player.querySelector('.wp-title').textContent = title || '';
+        document.body.appendChild(player);
+        document.body.style.overflow = 'hidden';
+        const v = player.querySelector('video');
+        // TUNING SCREEN (AJ Sep 17 "2-3 seconds to load anything"): instant logo + channel
+        // + what's on, up until real frames flow; a 12s watchdog walks the backup sources
+        // so a dead first url self-heals instead of spinning forever.
+        if (!document.getElementById('ck-spin-kf')) {
+            const st = document.createElement('style'); st.id = 'ck-spin-kf';
+            st.textContent = '@keyframes ckspin{to{transform:rotate(360deg)}}';
+            document.head.appendChild(st);
+        }
+        const ov = document.createElement('div');
+        ov.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#0c0c10;z-index:6';
+        const ovImg = document.createElement('img');
+        ovImg.style.cssText = 'max-height:90px;max-width:220px'; ovImg.onerror = () => ovImg.remove();
+        if (logo) ovImg.src = logo; else ovImg.remove();
+        const ovSpin = document.createElement('div');
+        ovSpin.style.cssText = 'width:34px;height:34px;border:3px solid #333;border-top-color:#e64545;border-radius:50%;animation:ckspin 1s linear infinite';
+        const ovName = document.createElement('div'); ovName.style.cssText = 'font-size:21px;color:#fff;font-weight:600';
+        const ovNow = document.createElement('div'); ovNow.style.cssText = 'font-size:15px;color:#9a9aa4';
+        ov.append(ovImg, ovSpin, ovName, ovNow);
+        player.appendChild(ov);
+        let tuned = false, dogT = 0;
+        const showOv = (nm, nw) => { tuned = false; ovName.textContent = 'Tuning ' + (nm || 'channel') + '…';
+            ovNow.textContent = nw ? 'Now: ' + nw : ''; ovSpin.style.display = ''; ov.style.display = 'flex'; };
+        showOv(title, now);
+        v.addEventListener('playing', () => { tuned = true; clearTimeout(dogT); ov.style.display = 'none'; });
+        const sources = [url, ...backups];
+        let si = 0;
+        const attach = async (u) => {
+            try { state?.hls?.destroy(); } catch {}
+            if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = u; return; }
+            if (!window.Hls) await new Promise((res, rej) => {
+                const sc = document.createElement('script');
+                sc.src = 'hls.min.js';   // self-hosted (CDN/CSP can't break playback)
+                sc.onload = res;
+                sc.onerror = () => { const c = document.createElement('script');
+                    c.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js';
+                    c.onload = res; c.onerror = rej; document.head.appendChild(c); };
+                document.head.appendChild(sc);
+            });
+            // long back buffer = pause keeps your place for a few minutes of live TV
+            const h = new window.Hls({ maxBufferLength: 30, backBufferLength: 300 });
+            h.on(window.Hls.Events.ERROR, (_, d) => {
+                if (d.fatal && state) {
+                    if (++si < sources.length) attach(sources[si]);     // next backup
+                    else { try { h.destroy(); } catch {} }
+                }
+            });
+            h.loadSource(u); h.attachMedia(v);
+            if (state) state.hls = h;
+        };
+        const armDog = () => { clearTimeout(dogT); dogT = setTimeout(() => {
+            if (tuned || !state) return;
+            if (++si < sources.length) { showOv(player.querySelector('.wp-title').textContent, ''); attach(sources[si]); armDog(); }
+            else { ovSpin.style.display = 'none'; ovName.textContent = 'This channel is down right now'; ovNow.textContent = 'Try another one — this one gets benched so it stops showing up';
+                   setTimeout(() => { if (!tuned) bail(); }, 3000); }
+        }, 12000); };
+        await attach(sources[0]); armDog();
+        const bail = () => { clearTimeout(dogT); try { state?.hls?.destroy(); } catch {} engine = null; closePlayer(false); };
+        player.querySelector('.wp-back').onclick = bail;
+        // GUIDE while watching (AJ Sep 17): side panel of the current category's channels
+        // with what's on now — click = tune straight over, playback never closes
+        const gp = player.querySelector('.lv-guidepanel');
+        const gbtn = player.querySelector('.wp-guide');
+        if (guide.length && onTune) {
+            gbtn.onclick = () => {
+                if (!gp.classList.contains('hidden')) { gp.classList.add('hidden'); return; }
+                gp.innerHTML = '';
+                for (const ch of guide) {
+                    const r = document.createElement('div'); r.className = 'lvg-row';
+                    r.innerHTML = `<span class="lvg-name"></span><span class="lvg-now"></span>`;
+                    r.querySelector('.lvg-name').textContent = ch.name;
+                    r.querySelector('.lvg-now').textContent = ch.now || '';
+                    r.onclick = async () => {
+                        r.classList.add('busy');
+                        try {
+                            const u = await onTune(ch.id);
+                            if (!u) return;
+                            si = 0; sources.length = 0; sources.push(u);
+                            player.querySelector('.wp-title').textContent = ch.name;
+                            showOv(ch.name, ch.now); armDog();
+                            await attach(u);
+                        } finally { r.classList.remove('busy'); }
+                    };
+                    gp.appendChild(r);
+                }
+                gp.classList.remove('hidden');
+            };
+        } else gbtn.parentElement.style.display = 'none';
+        const pp = player.querySelector('.wp-pp');
+        pp.onclick = () => { if (v.paused) { v.play(); pp.textContent = '⏸'; } else { v.pause(); pp.textContent = '▶'; } };
+        player.querySelector('.wp-vol').oninput = (e) => v.volume = +e.target.value;
+        player.querySelector('.wp-fs').onclick = () =>
+            document.fullscreenElement ? document.exitFullscreen() : player.requestFullscreen().catch(() => {});
+        const ckEl = player.querySelector('.wp-clock');
+        ckEl.textContent = clock(new Date());
+        state.tick = setInterval(() => { if (player) ckEl.textContent = clock(new Date()); }, 30000);
+        document.addEventListener('keydown', function esc(e) {
+            if (!player) { document.removeEventListener('keydown', esc); return; }
+            if (e.key === 'Escape') { bail(); document.removeEventListener('keydown', esc); }
+        });
+    }
+
     window.ckPlay = async (opts) => {
+        if (opts?.live) return livePlay(opts);
         if (!DESK) return webPlay(opts);
         const toMpv = (o) => { engine = 'mpv'; announceMpv(); return window.ck.play(o); };
         if (opts.localFile)

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CouchKing</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=0917c">
 </head>
 <body>
 <div id="app">
@@ -38,6 +38,8 @@
       <div class="rail-item nav" data-nav="library"><span class="ricon">📚</span><span class="rail-label">Library</span></div>
       <!-- desktop only — the web shim hides it (browsers can't hold GBs) -->
       <div class="rail-item nav hidden" data-nav="downloads" id="rail-downloads"><span class="ricon">⬇️</span><span class="rail-label">Downloads</span></div>
+      <!-- only appears when the installed addon serves a live-tv catalog (neutral shell) -->
+      <div class="rail-item nav hidden" data-nav="livetv" id="rail-livetv"><span class="ricon">📺</span><span class="rail-label">Live TV</span></div>
       <div class="rail-item nav" data-nav="settings"><span class="ricon">⚙️</span><span class="rail-label">Settings</span></div>
     </nav>
 
@@ -66,6 +68,14 @@
 
       <section id="view-downloads" class="page hidden"><div class="page-pad" id="downloads-body"></div></section>
 
+      <section id="view-livetv" class="page hidden"><div class="page-pad">
+        <div class="lv-head"><h2>Live TV</h2>
+          <select id="lv-region" title="Region">
+            <option value="">🇺🇸 USA</option><option value="UK">🇬🇧 UK</option><option value="CA">🇨🇦 Canada</option>
+          </select></div>
+        <div id="livetv-banner"></div>
+        <div id="livetv-chips" class="lv-chips"></div><div id="livetv-grid" class="lv-grid"></div>
+      </div></section>
       <section id="view-settings" class="page hidden"><div class="page-pad" id="settings-body"></div></section>
 
       <section id="view-detail" class="page detail-page hidden">
@@ -93,6 +103,6 @@
 </div>
 <script src="ck-web.js"></script>
 <script src="catalog.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=0917c"></script>
 </body>
 </html>

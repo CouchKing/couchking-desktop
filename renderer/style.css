@@ -338,3 +338,110 @@ select:focus, select:hover { border-color:var(--accent); }
 .dl-info b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dl-show { margin: .3rem 0; }
 .dl-show summary { cursor: pointer; padding: .5rem .2rem; }
+
+/* ---- Live TV (Sep 17) — addon-gated channel grid + live player chrome ---- */
+.lv-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .6rem 0 1rem; }
+.lv-chip { background: #241f3d; color: #cfc9ea; border: 1px solid #3a3560; border-radius: 999px;
+  padding: .35rem .9rem; cursor: pointer; font-size: .85rem; }
+.lv-chip.on { background: #7b5bf5; color: #fff; border-color: #7b5bf5; }
+.lv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .8rem; }
+.lv-tile { background: #1c1832; border: 1px solid rgba(255,255,255,.06); border-radius: 12px;
+  padding: .7rem; cursor: pointer; text-align: center; transition: transform .12s, border-color .12s; }
+.lv-tile:hover { transform: translateY(-2px); border-color: #7b5bf5; }
+.lv-tile.busy { opacity: .5; pointer-events: none; }
+.lv-logo { height: 64px; display: flex; align-items: center; justify-content: center; font-size: 2rem; }
+.lv-logo img { max-height: 64px; max-width: 90%; object-fit: contain; }
+.lv-name { font-size: .85rem; font-weight: 600; margin-top: .45rem; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.lv-now { font-size: .72rem; color: #9b93c0; margin-top: .15rem; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-height: .9rem; }
+.lv-loading { color: #9b93c0; padding: 2rem 0; grid-column: 1/-1; text-align: center; }
+.wp-live { color: #ff5b5b; font-weight: 700; margin-right: .8rem; }
+/* guide rows — real-TV listing look */
+#livetv-grid { display: block; }
+.lvg-chrow { display: grid; grid-template-columns: 200px 1fr 220px 44px; gap: .9rem; align-items: center;
+  background: #17132a; border: 1px solid rgba(255,255,255,.05); border-radius: 10px;
+  padding: .55rem .8rem; margin-bottom: .45rem; cursor: pointer; }
+.lvg-chrow:hover { border-color: #7b5bf5; }
+.lvg-chrow.busy { opacity: .5; pointer-events: none; }
+.lvg-ch { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+.lvg-ch img { width: 44px; height: 34px; object-fit: contain; }
+.lvg-chname { font-weight: 600; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvg-prog { min-width: 0; }
+.lvg-title { font-size: .86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvg-dim { color: #9b93c0; }
+.lvg-bar { height: 4px; background: #2b2547; border-radius: 3px; margin: .3rem 0 .2rem; }
+.lvg-fill { height: 100%; background: #7b5bf5; border-radius: 3px; }
+.lvg-times { font-size: .7rem; color: #9b93c0; }
+.lvg-next { font-size: .76rem; color: #9b93c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvg-play { background: #7b5bf5; color: #fff; border: 0; border-radius: 8px; height: 34px; cursor: pointer; }
+/* in-player guide panel */
+.lv-guidepanel { position: absolute; right: 0; top: 0; bottom: 0; width: 340px; overflow-y: auto;
+  background: rgba(13,11,24,.96); border-left: 1px solid #3a3560; padding: .6rem; z-index: 30; }
+.lvg-row { padding: .5rem .6rem; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: .15rem; }
+.lvg-row:hover { background: #241f3d; }
+.lvg-row.busy { opacity: .5; }
+.lvg-row .lvg-name { font-size: .85rem; font-weight: 600; }
+.lvg-row .lvg-now { font-size: .74rem; color: #9b93c0; }
+
+/* ==== CLASSIC EPG GUIDE (AJ Sep 17: "like im on a classic tv box") ==== */
+.lvcw { margin: 0 0 1rem; }
+.lvcw-t { font-size: .9rem; font-weight: 700; color: #cfc9ea; margin-bottom: .45rem; }
+.lvcw-row { display: flex; gap: .6rem; overflow-x: auto; padding-bottom: .3rem; }
+.lvcw-card { flex: 0 0 auto; display: flex; align-items: center; gap: .55rem; background: #241f3d;
+  border: 1px solid #3a3560; border-radius: 10px; padding: .5rem .7rem; cursor: pointer; min-width: 180px; max-width: 240px; }
+.lvcw-card:hover { border-color: #7b5bf5; }
+.lvcw-card.busy { opacity: .5; pointer-events: none; }
+.lvcw-card img { width: 34px; height: 34px; object-fit: contain; border-radius: 6px; background: #171232; }
+.lvcw-n { font-size: .82rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvcw-p { font-size: .72rem; color: #9b93c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+.epg { border: 1px solid #2c2749; border-radius: 12px; background: #14102a; overflow: hidden; }
+.epg-scroll { overflow: auto; max-height: calc(100vh - 260px); }
+.epg-hrow, .epg-row { display: flex; width: max-content; border-bottom: 1px solid #221d3e; }
+.epg-hrow { position: sticky; top: 0; z-index: 5; background: #171232; }
+.epg-ch { position: sticky; left: 0; z-index: 3; flex: 0 0 210px; width: 210px; display: flex; align-items: center;
+  gap: .45rem; padding: .45rem .55rem; background: #171232; border-right: 1px solid #2c2749; cursor: pointer; }
+.epg-corner { font-size: .74rem; color: #9b93c0; text-transform: uppercase; letter-spacing: .06em; }
+.epg-ch img { width: 30px; height: 30px; object-fit: contain; border-radius: 6px; background: #100d20; }
+.epg-cn { font-size: .8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.epg-fav { color: #4a4470; cursor: pointer; font-size: 1rem; flex: 0 0 auto; transition: color .15s; }
+.epg-fav:hover { color: #cfc9ea; }
+.epg-fav.on { color: #f5c542; }
+.epg-lane { position: relative; height: 56px; flex: 0 0 auto; background:
+  repeating-linear-gradient(90deg, transparent 0, transparent 259px, #221d3e 259px, #221d3e 260px); }
+.epg-hrow .epg-lane { height: 30px; display: flex; background: none; }
+.epg-tick { flex: 0 0 auto; font-size: .72rem; color: #9b93c0; padding: .35rem 0 0 .5rem; border-left: 1px solid #221d3e; }
+.epg-block { position: absolute; top: 5px; bottom: 5px; background: #241f3d; border: 1px solid #322c55;
+  border-radius: 8px; padding: .3rem .5rem; overflow: hidden; cursor: pointer; }
+.epg-block:hover { border-color: #7b5bf5; }
+.epg-block.on { background: #33285f; border-color: #7b5bf5; }
+.epg-block.dim { opacity: .55; }
+.epg-bt { font-size: .76rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.epg-bs { font-size: .68rem; color: #9b93c0; }
+.epg-nowline { position: absolute; top: 0; bottom: 0; width: 2px; background: #e94b6a; z-index: 2; pointer-events: none; }
+.epg-row.busy { opacity: .5; pointer-events: none; }
+
+.lv-days { display:flex; gap:.4rem; margin:0 0 .7rem; }
+
+/* live-games banner + region head */
+.lv-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+#lv-region { background: #241f3d; color: #e8e4f8; border: 1px solid #3a3560; border-radius: 10px;
+  padding: .45rem .7rem; font-size: .9rem; cursor: pointer; }
+.lvb-strip { margin: .4rem 0 .9rem; }
+.lvb-h { font-size: .92rem; font-weight: 700; color: #e8e4f8; margin-bottom: .45rem; }
+.lvb-livehdr { color: #e94b6a; }
+.lvb-row { display: flex; gap: .6rem; overflow-x: auto; padding-bottom: .3rem; }
+.lvb-card { flex: 0 0 auto; min-width: 220px; max-width: 300px; background: #241f3d; border: 1px solid #3a3560;
+  border-radius: 10px; padding: .55rem .75rem; cursor: pointer; }
+.lvb-card:hover { border-color: #7b5bf5; }
+.lvb-card.live { border-color: #7d2540; background: #2c1830; }
+.lvb-card.busy { opacity: .5; pointer-events: none; }
+.lvb-t { font-size: .84rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvb-m { font-size: .72rem; color: #9b93c0; margin-top: .2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvb-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #e94b6a;
+  margin-right: .35rem; animation: lvpulse 1.4s infinite; }
+@keyframes lvpulse { 50% { opacity: .35; } }
+.epg-sechdr { display: flex; width: max-content; background: #1b1636; border-bottom: 1px solid #221d3e; }
+.epg-sec { font-size: .78rem; font-weight: 700; color: #a08ef0; text-transform: uppercase; letter-spacing: .05em; padding: .35rem .55rem; }
+.epg-seclane { height: 28px; background: #1b1636; }
+.epg-more { padding: .7rem; text-align: center; }
