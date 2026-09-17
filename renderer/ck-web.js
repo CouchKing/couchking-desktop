@@ -631,12 +631,9 @@
             stallT = setTimeout(() => {
                 if (!state) return;
                 showOv(player.querySelector('.wp-title').textContent, '');
-                // first stall: fresh HLS session. Stalling AGAIN within 90s: the HLS is
-                // sick — switch to the server-side pump feed.
-                const nowMs = Date.now();
-                if (tsCur && state._lastStall && nowMs - state._lastStall < 90e3) playTs(tsCur);
-                else attach(sources[si] || sources[0]);
-                if (state) state._lastStall = nowMs;
+                // a stall = the HLS session is sick; a fresh session just dies again.
+                // Straight to the server-side ffmpeg hub feed (continuous, restart-proof).
+                if (tsCur) playTs(tsCur); else attach(sources[si] || sources[0]);
                 armDog();
             }, 12000);
         });

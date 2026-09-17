@@ -198,7 +198,7 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
                        logo: ci?.logo || '', now: nowP?.t || '',
                        chid: id, fav: _lvIsFav(id), isFav: _lvIsFav,
                        onFav: async (cid, on) => {
-                           await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(String(cid).replace(/^cklive:/, ''))}&on=${on ? 1 : 0}`, { method: 'POST' });
+                           await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(String(cid).replace(/^cklive:/, ""))}&on=${on ? 1 : 0}&p=${encodeURIComponent(S.pid || "")}`, { method: 'POST' });
                            _lvGuideCache.at = 0;
                        },
                        guide: guideList, onTune: async (cid) => {
@@ -216,7 +216,7 @@ let lvShowAll = false;   // guide renders 150 rows fast, expands on demand
 async function lvGuideData() {   // one fetch per region per minute, shared by guide + section chips
     let d = _lvGuideCache.r === lvRegion ? _lvGuideCache.d : null;
     if (!d || Date.now() - _lvGuideCache.at > 55e3) {
-        d = await j(`${SERVICE}/live/${S.subKey}/guide.json${lvRegion ? '?r=' + lvRegion : ''}`);
+        d = await j(`${SERVICE}/live/${S.subKey}/guide.json?p=${encodeURIComponent(S.pid || "")}${lvRegion ? "&r=" + lvRegion : ""}`);
         if (d?.channels?.length) _lvGuideCache = { at: Date.now(), d, r: lvRegion };
     }
     return _lvGuideCache.r === lvRegion ? _lvGuideCache.d : null;
@@ -298,7 +298,7 @@ async function lvRenderGuide(grid) {
         ev.stopPropagation();
         const on = !el.classList.contains('on');
         el.classList.toggle('on', on);
-        await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(el.dataset.fav)}&on=${on ? 1 : 0}`, { method: 'POST' });
+        await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(el.dataset.fav)}&on=${on ? 1 : 0}&p=${encodeURIComponent(S.pid || "")}`, { method: 'POST' });
         _lvGuideCache.at = 0;   // re-pin on next render
     });
 }
@@ -336,8 +336,20 @@ async function _lvFavToggle(chid, btn) {
     const on = !btn.classList.contains('on');
     btn.classList.toggle('on', on);
     btn.textContent = on ? '★' : '☆';
-    await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(id)}&on=${on ? 1 : 0}`, { method: 'POST' });
-    _lvGuideCache.at = 0;   // guide + favorites list refresh next render
+    // patch the cache IN PLACE so every view agrees instantly — waiting on the next
+    // fetch made a fresh star look broken (AJ Sep 17 "doesn't add until i refresh")
+    const d0 = _lvGuideCache.d;
+    if (d0) {
+        d0.favs = (d0.favs || []).filter(x => x !== id);
+        d0.favChannels = (d0.favChannels || []).filter(c => c.id !== id);
+        if (on) {
+            d0.favs.push(id);
+            const full = (d0.channels || []).find(c => c.id === id);
+            if (full) d0.favChannels.push(full);
+        }
+    }
+    await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(id)}&on=${on ? 1 : 0}&p=${encodeURIComponent(S.pid || "")}`, { method: 'POST' });
+    _lvGuideCache.at = 0;   // still refetch soon for server truth
 }
 const _lvIsFav = chid => (_lvGuideCache.d?.favs || []).includes(String(chid).replace(/^cklive:/, ''));
 // one channel row: logo | now-playing + progress | next | ★ | ▶  (sections, search, favs)
