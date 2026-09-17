@@ -137,6 +137,13 @@ setInterval(async () => {
     const st = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`);
     if (!st) return;
     S.state = st; applyAccountPrefs();
+    // the active profile may have been renamed/recolored on another device — keep the
+    // rail chip live too, not just the content rows (Sep 17 profile-sync pass)
+    const liveProf = (st.profiles || []).find(p => p.id === S.pid);
+    if (liveProf) {
+        S.user = liveProf.name; S.useg = `${liveProf.name} #${String(liveProf.id).slice(-4)}`;
+        $('prof-name').textContent = liveProf.name; paintAvatar($('prof-avatar'), liveProf);
+    }
     const sig = syncSig();
     if (sig === lastSyncSig) return;
     lastSyncSig = sig;
@@ -236,8 +243,17 @@ async function cineRow(type, id, genre, pages = 1) {
     return out.slice(0, pages > 2 ? 400 : 60);
 }
 async function idsRow(type, ids) {
-    const metas = await Promise.all(ids.map(id =>
-        j(`${CINE}/meta/movie/${id}.json`).then(d => d?.meta || j(`${CINE}/meta/series/${id}.json`).then(x => x?.meta))));
+    const metas = await Promise.all(ids.map(async id => {
+        const m = (await j(`${CINE}/meta/movie/${id}.json`))?.meta
+            || (await j(`${CINE}/meta/series/${id}.json`))?.meta;
+        if (m) return m;
+        // Cinemeta doesn't know far-future titles yet (VisionQuest) — TMDB does; the tile
+        // still shows in watch order, clicking gets the standard unaired treatment (Sep 17)
+        const f = await j(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB}&external_source=imdb_id`);
+        const mv = f?.movie_results?.[0], tv = f?.tv_results?.[0], hit = mv || tv;
+        return hit ? { id, type: mv ? 'movie' : 'series', name: hit.title || hit.name,
+            poster: hit.poster_path ? `https://image.tmdb.org/t/p/w342${hit.poster_path}` : '' } : null;
+    }));
     const out = [];
     for (const m of metas) if (m) out.push({ id: m.id, type: m.type || type, name: m.name, poster: m.poster });
     return out;
@@ -1483,6 +1499,7 @@ function profileManager() {
     ov.appendChild(card); ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
     document.body.appendChild(ov);
     const listView = () => {
+        editing = false;
         const profs = S.state.profiles || [];
         card.innerHTML = '<h3>Profiles</h3>';
         for (const p of profs) {
@@ -1538,9 +1555,11 @@ function profileManager() {
         save.onclick = () => {
             const name = nameIn.value.trim(); if (!name) return;
             S.state.profiles = S.state.profiles || [];
-            if (p) { p.name = name; p.avatar = avatar; p.color = color; if (p.id === S.pid) switchProfile(p); }
+            // mt = edit stamp: server + apps keep the NEWEST edit on merge, so a stale
+            // device can't revert this change (Sep 17)
+            if (p) { p.name = name; p.avatar = avatar; p.color = color; p.mt = Date.now(); if (p.id === S.pid) switchProfile(p); }
             else {
-                const np = { id: 'p' + Date.now().toString(36), name, avatar, color };
+                const np = { id: 'p' + Date.now().toString(36), name, avatar, color, mt: Date.now() };
                 S.state.profiles.push(np);
                 S.state.states = S.state.states || {};
                 S.state.states[np.id] = {};
@@ -1550,8 +1569,15 @@ function profileManager() {
         const back = document.createElement('button'); back.className = 'ghost'; back.textContent = '‹ Back';
         back.onclick = listView;
         card.append(nameIn, picks, cpicks, save, back);
+        editing = true;
     };
+    let editing = false;
     listView();
+    // freshen from the server on open so a profile just added on the Fire TV is already
+    // here — don't stomp an edit form mid-typing if the reply lands late (Sep 17)
+    j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`)
+        .then(st => { if (st && !editing && document.getElementById('prof-ov')) { S.state = st; listView(); } })
+        .catch(() => {});
 }
 
 // ---------- account write-back (server MERGES, so partial pushes are safe) ----------
