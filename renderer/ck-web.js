@@ -563,7 +563,7 @@
     // everywhere else hls.js attaches to the same <video>. No /webplay remux (that path is
     // for files), no seeking, auto-failover to the channel's backup urls on fatal error.
     async function livePlay({ url, title, backups = [], guide = [], onTune = null, logo = '', now = '',
-                              chid = '', fav = false, onFav = null, isFav = null }) {
+                              chid = '', fav = false, onFav = null, isFav = null, tsUrl = '' }) {
         closePlayer(false);
         engine = 'web';
         state = { offset: 0, dur: 0 };
@@ -631,12 +631,15 @@
             stallT = setTimeout(() => {
                 if (!state) return;
                 showOv(player.querySelector('.wp-title').textContent, '');
-                attach(sources[si] || sources[0]); armDog();
+                if (tsCur) playTs(tsCur); else attach(sources[si] || sources[0]);
+                armDog();
             }, 12000);
         });
         const sources = [url, ...backups];
         let si = 0;
         const attach = async (u) => {
+            if (!u) return;
+            try { state?.mp?.destroy(); } catch {} if (state) state.mp = null;
             try { state?.hls?.destroy(); } catch {}
             if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = u; return; }
             if (!window.Hls) await new Promise((res, rej) => {
@@ -659,14 +662,36 @@
             h.loadSource(u); h.attachMedia(v);
             if (state) state.hls = h;
         };
+        // STEADY-FEED engine (AJ Sep 17 "skipped forward then it froze"): panel HLS runs
+        // on server-side sessions that reset mid-play; the continuous .ts via mpegts.js
+        // has no sessions to break. HLS stays as the fallback chain.
+        let tsCur = tsUrl;
+        const stopMp = () => { try { state?.mp?.destroy(); } catch {} if (state) state.mp = null; };
+        const playTs = async (tsu) => {
+            if (!window.mpegts) await new Promise((res2) => {
+                const sc = document.createElement('script'); sc.src = 'mpegts.min.js';
+                sc.onload = res2; sc.onerror = res2; document.head.appendChild(sc);
+            });
+            if (!window.mpegts?.isSupported?.()) return false;
+            stopMp(); try { state?.hls?.destroy(); } catch {}
+            const mp = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url: tsu });
+            mp.attachMediaElement(v); mp.load(); v.play().catch(() => {});
+            mp.on(window.mpegts.Events.ERROR, () => {
+                stopMp();
+                if (sources.length && sources[si || 0]) { attach(sources[si] || sources[0]); armDog(); }
+            });
+            if (state) state.mp = mp;
+            return true;
+        };
         const armDog = () => { clearTimeout(dogT); dogT = setTimeout(() => {
             if (tuned || !state) return;
-            if (++si < sources.length) { showOv(player.querySelector('.wp-title').textContent, ''); attach(sources[si]); armDog(); }
+            if (++si < sources.length) { showOv(player.querySelector('.wp-title').textContent, ''); stopMp(); attach(sources[si]); armDog(); }
             else { ovSpin.style.display = 'none'; ovName.textContent = 'This channel is down right now'; ovNow.textContent = 'Try another one — this one gets benched so it stops showing up';
                    setTimeout(() => { if (!tuned) bail(); }, 3000); }
         }, 12000); };
-        await attach(sources[0]); armDog();
-        const bail = () => { clearTimeout(dogT); try { state?.hls?.destroy(); } catch {} engine = null; closePlayer(false); };
+        if (!(tsCur && await playTs(tsCur))) { if (sources[0]) await attach(sources[0]); }
+        armDog();
+        const bail = () => { clearTimeout(dogT); clearTimeout(stallT); stopMp(); try { state?.hls?.destroy(); } catch {} engine = null; closePlayer(false); };
         player.querySelector('.wp-back').onclick = bail;
         // GUIDE while watching (AJ Sep 17): side panel of the current category's channels
         // with what's on now — click = tune straight over, playback never closes
@@ -690,13 +715,16 @@
                     r.onclick = async () => {
                         r.classList.add('busy');
                         try {
-                            const u = await onTune(ch.id);
-                            if (!u) return;
-                            si = 0; sources.length = 0; sources.push(u);
+                            const r2 = await onTune(ch.id);
+                            const hls = r2?.hls || (typeof r2 === 'string' && r2 ? [r2] : []);
+                            const ts2 = r2?.ts || '';
+                            if (!hls.length && !ts2) return;
+                            si = 0; sources.length = 0; hls.forEach(u2 => sources.push(u2));
+                            tsCur = ts2;
                             player.querySelector('.wp-title').textContent = ch.name;
                             curCh = ch.id; curFav = !!(isFav && isFav(ch.id)); paintFav();
                             showOv(ch.name, ch.now); armDog();
-                            await attach(u);
+                            if (!(ts2 && await playTs(ts2))) await attach(sources[0]);
                         } finally { r.classList.remove('busy'); }
                     };
                     gp.appendChild(r);

@@ -152,9 +152,9 @@ async function livetvDetect() {
 }
 
 let lvGenre = 'Guide';
-const _lvTune = async (id) => {   // id = full meta id (cklive:espn)
+const _lvTune = async (id) => {   // id = full meta id (cklive:espn) → [{url, ts}]
     const s = await j(S.liveCat.base + `/stream/tv/${encodeURIComponent(id)}.json`);
-    return (s?.streams || []).map(x => x.url);
+    return (s?.streams || []).map(x => ({ url: x.url, ts: x.ckTs === 1 })).filter(x => x.url);
 };
 async function _lvPlayCh(id, name, guideList, busyEl) {
     busyEl?.classList.add('busy');
@@ -184,20 +184,27 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
                 guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c) });
             }
         }
-        const urls = await _lvTune(id);
-        if (!urls.length) { toast('Channel is offline right now'); return; }
+        const streams = await _lvTune(id);
+        if (!streams.length) { toast('Channel is offline right now'); return; }
+        // the steady .ts feed sidesteps panel HLS sessions that reset mid-play (the
+        // "skipped forward then froze" class) — livePlay prefers it via mpegts.js
+        const tsUrl = streams.find(x => x.ts)?.url || '';
+        const urls = streams.filter(x => !x.ts).map(x => x.url);
         // tuning-screen extras from the guide cache: channel logo + what they're about to
         // watch (AJ Sep 17 "loading screen … that they are going to watch")
         const ci = (_lvGuideCache.d?.channels || []).find(c => 'cklive:' + c.id === id);
         const nowP = ci?.progs?.find(p => p.s <= Date.now() && p.e > Date.now());
-        await ckPlay({ live: true, url: urls[0], title: name, backups: urls.slice(1),
+        await ckPlay({ live: true, url: urls[0] || '', title: name, backups: urls.slice(1), tsUrl,
                        logo: ci?.logo || '', now: nowP?.t || '',
                        chid: id, fav: _lvIsFav(id), isFav: _lvIsFav,
                        onFav: async (cid, on) => {
                            await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(String(cid).replace(/^cklive:/, ''))}&on=${on ? 1 : 0}`, { method: 'POST' });
                            _lvGuideCache.at = 0;
                        },
-                       guide: guideList, onTune: async (cid) => (await _lvTune(cid))[0] });
+                       guide: guideList, onTune: async (cid) => {
+                           const st = await _lvTune(cid);
+                           return { hls: st.filter(x => !x.ts).map(x => x.url), ts: st.find(x => x.ts)?.url || '' };
+                       } });
     } finally { busyEl?.classList.remove('busy'); }
 }
 // ---- CLASSIC GUIDE GRID (AJ Sep 17 "like im on a classic tv box"): sticky channel column,
