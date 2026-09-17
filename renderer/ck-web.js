@@ -609,6 +609,13 @@
         const ovName = document.createElement('div'); ovName.style.cssText = 'font-size:21px;color:#fff;font-weight:600';
         const ovNow = document.createElement('div'); ovNow.style.cssText = 'font-size:15px;color:#9a9aa4';
         ov.append(ovImg, ovSpin, ovName, ovNow);
+        // the overlay used to cover the Back button = trapped watching "Tuning…" while
+        // the watchdog walked dead sources (AJ Sep 17) — escape hatch ON the overlay
+        const ovBack = document.createElement('button');
+        ovBack.textContent = '‹ Back';
+        ovBack.style.cssText = 'position:absolute;top:18px;left:18px;background:#1c1c22;border:1px solid #3a3a44;color:#fff;border-radius:10px;padding:8px 16px;font-size:15px;cursor:pointer';
+        ovBack.onclick = () => bail();
+        ov.appendChild(ovBack);
         player.appendChild(ov);
         let tuned = false, dogT = 0;
         const showOv = (nm, nw) => { tuned = false; ovName.textContent = 'Tuning ' + (nm || 'channel') + '…';
@@ -670,6 +677,12 @@
                 if (!gp.classList.contains('hidden')) { gp.classList.add('hidden'); return; }
                 gp.innerHTML = '';
                 for (const ch of guide) {
+                    if (ch.hdr) {   // section divider (★ Favorites / Continue watching / Sports…)
+                        const h = document.createElement('div');
+                        h.textContent = ch.hdr;
+                        h.style.cssText = 'opacity:.65;font-weight:700;font-size:12px;padding:10px 4px 2px;pointer-events:none;text-transform:uppercase;letter-spacing:.5px';
+                        gp.appendChild(h); continue;
+                    }
                     const r = document.createElement('div'); r.className = 'lvg-row';
                     r.innerHTML = `<span class="lvg-name"></span><span class="lvg-now"></span>`;
                     r.querySelector('.lvg-name').textContent = ch.name;

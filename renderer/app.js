@@ -159,6 +159,31 @@ const _lvTune = async (id) => {   // id = full meta id (cklive:espn)
 async function _lvPlayCh(id, name, guideList, busyEl) {
     busyEl?.classList.add('busy');
     try {
+        // in-player Guide = the WHOLE guide (AJ Sep 17): ★ Favorites, recently watched,
+        // then every section — not just the category you tuned from
+        const gd2 = _lvGuideCache.d;
+        if (gd2?.channels?.length) {
+            const nowMs = Date.now();
+            const nowOf = c => (c.progs?.find(p => p.s <= nowMs && p.e > nowMs) || {}).t || '';
+            const favSet = new Set(gd2.favs || []);
+            const byId = new Map(gd2.channels.map(c => [c.id, c]));
+            guideList = [];
+            if (gd2.favChannels?.length) {
+                guideList.push({ hdr: '★ Favorites' });
+                for (const c of gd2.favChannels) guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c) });
+            }
+            const recCh = (gd2.recent || []).filter(r => !favSet.has(r)).map(r => byId.get(r)).filter(Boolean);
+            if (recCh.length) {
+                guideList.push({ hdr: '↻ Continue watching' });
+                for (const c of recCh) guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c) });
+            }
+            let lastSec = null;
+            for (const c of gd2.channels) {
+                const sec = c.section || c.genre || 'More channels';
+                if (sec !== lastSec) { lastSec = sec; guideList.push({ hdr: sec }); }
+                guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c) });
+            }
+        }
         const urls = await _lvTune(id);
         if (!urls.length) { toast('Channel is offline right now'); return; }
         // tuning-screen extras from the guide cache: channel logo + what they're about to
