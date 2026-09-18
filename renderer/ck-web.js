@@ -60,6 +60,12 @@
         const posAtExit = st ? st.offset + (v?.currentTime || 0) : 0;
         clearInterval(st?.tick);
         clearTimeout(st?.fbTimer);
+        // DESTROY the streaming engine, don't just pause the <video> (AJ Sep 18: a closed web/
+        // desktop player kept pulling segments = kept its Live TV device slot held). hls.js /
+        // mpegts.js keep fetching after a bare pause; destroy() closes the connections so the
+        // slot frees (server sweeps it within ~15s once the beats stop).
+        try { st?.hls?.destroy(); } catch {}
+        try { st?.mp?.destroy(); } catch {}
         try { v.pause(); v.removeAttribute('src'); v.load(); } catch {}
         player.remove(); player = null;
         document.body.style.overflow = '';
