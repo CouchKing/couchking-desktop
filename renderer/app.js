@@ -506,6 +506,27 @@ setInterval(async () => {
     if (sig === lastSyncSig) return;
     lastSyncSig = sig;
     if (page === 'home') { hero(pstate()); paintContinueRow(); }
+    // badge refresh IN PLACE (AJ Sep 17 "can't tell if watched/added unless i click"):
+    // a state fetch that failed mid-load (server restart) left every tile badge-less
+    // forever — patch eyes/checks onto existing tiles whenever fresh state lands
+    try {
+        const st2 = pstate();
+        const wl = new Set((st2.watchlist || []).map(x => x.id));
+        const done = new Set(st2.watchedIds || []);
+        document.querySelectorAll('.poster').forEach(po => {
+            const nm = po.querySelector('.pt')?.title;
+            const t = po._ckT; const id = t?.id;
+            if (!id || po.querySelector('.cw-x')) return;   // CW row keeps its ✕, no badges
+            const wrap = po.querySelector('.pwrap'); if (!wrap) return;
+            const want = (cls, on, txt) => {
+                let el = wrap.querySelector('.' + cls);
+                if (on && !el) { el = document.createElement('div'); el.className = cls; el.textContent = txt; wrap.appendChild(el); }
+                if (!on && el) el.remove();
+            };
+            want('badge-list', wl.has(id), '✓');
+            want('badge-done', done.has(id), '👁');
+        });
+    } catch {}
 }, 60000);
 
 // rail navigation: pages live side by side, rail icon marks the active one
@@ -550,6 +571,7 @@ function posterEl(t, opts = {}) {
         + (PREF('titles', true) ? `<div class="pt" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || ''}</div>` : '');
     d.onclick = (e) => { if (!e.target.classList.contains('cw-x')) detail(t); };
     if (opts.removable) d.querySelector('.cw-x').onclick = () => removeContinue(t, d);
+    d._ckT = t;   // the badge-refresh pass needs the tile's identity
     return d;
 }
 function removeContinue(t, el) {
