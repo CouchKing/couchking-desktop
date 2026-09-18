@@ -258,7 +258,7 @@ async function lvRenderGuide(grid) {
     }
     let ticks = '';
     for (let i = 0; i < SLOTS; i++) ticks += `<div class="epg-tick" style="width:${SLOTW}px">${fmtT(t0 + i * 1800e3)}</div>`;
-    h += `<div class="epg"><div class="epg-scroll"><div class="epg-hrow"><div class="epg-ch epg-corner">Channel</div><div class="epg-lane" style="width:${SLOTS * SLOTW}px">${ticks}</div></div>`;
+    h += `<div class="epg"><div class="epg-scroll"><div class="epg-hrow"><div class="epg-ch epg-corner">${new Date(t0).toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"})}</div><div class="epg-lane" style="width:${SLOTS * SLOTW}px">${ticks}</div></div>`;
     const rowHtml = (c) => {
         const progs = (c.progs || []).filter(p => p.e > t0 && p.s < tEnd);
         let blocks = '';
