@@ -289,6 +289,15 @@ async function lvRenderGuide(grid) {
     if (rest.length > shown) h += `<div class="epg-more"><button id="epg-showall" class="lv-chip">Show all ${rest.length} channels</button></div>`;
     h += `</div></div>`;
     grid.innerHTML = h;
+    // the corner date FOLLOWS the scroll — crossing midnight flips it to the next day
+    // (AJ Sep 18 "i'm scrolling and don't know what day i'm on")
+    {
+        const sc = grid.querySelector('.epg-scroll'), corner = grid.querySelector('.epg-corner');
+        if (sc && corner) sc.addEventListener('scroll', () => {
+            corner.textContent = new Date(t0 + (sc.scrollLeft / SLOTW) * 1800e3)
+                .toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+        }, { passive: true });
+    }
     grid.querySelectorAll('[data-day]').forEach(el => el.onclick = (ev) => {
         ev.stopPropagation(); lvDay = +el.dataset.day; lvRenderGuide(grid);
     });
