@@ -194,6 +194,27 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
         // freezes): skip their HLS entirely, straight to the server hub feed, which also
         // walks the FREE feeds for these shows when the panel's copy is dead
         if (tsUrl && /^cklive:(en-)?24-7-/.test(String(id))) urls = [];
+        // ACCESS GATE before the player opens (AJ Sep 18: "firetv, phone, apk AND desktop —
+        // all should get a message when it's locked for the device limit"). The gate is
+        // per-KEY, identical on every source, so probe one url and read the server's reason
+        // instead of spinning forever on a nameless source error.
+        {
+            const gateUrl = urls[0] || tsUrl;
+            if (gateUrl) {
+                try {
+                    const gr = await fetch(gateUrl, { method: 'GET' });
+                    if (gr.status === 429 || gr.status === 503 || gr.status === 403) {
+                        const reason = (await gr.text().catch(() => '')).trim();
+                        toast(reason || (gr.status === 429
+                            ? "You're already watching Live TV on another device. Stop that stream to watch here."
+                            : gr.status === 503 ? 'Live TV is at full capacity right now — try again in a couple minutes.'
+                            : 'Live TV isn’t available on your account.'));
+                        return;
+                    }
+                    try { gr.body?.cancel?.(); } catch {}   // status only — don't download the stream
+                } catch {}
+            }
+        }
         // tuning-screen extras from the guide cache: channel logo + what they're about to
         // watch (AJ Sep 17 "loading screen … that they are going to watch")
         const ci = (_lvGuideCache.d?.channels || []).find(c => 'cklive:' + c.id === id);
