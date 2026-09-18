@@ -400,6 +400,21 @@ async function livetvPage() {
     if (!S.liveCat) return;
     const chips = $('livetv-chips'), grid = $('livetv-grid');
     const sel = $('lv-region');
+    // LOCKED (Live TV not on this plan, AJ Sep 18): a big centered banner, nothing else —
+    // no chips, no guide, no clickable tiles. The catalog returns a single cklive:upgrade
+    // marker when the key isn't entitled.
+    const lockChk = await j(S.liveCat.base + `/catalog/tv/${S.liveCat.cat.id}.json`);
+    if ((lockChk?.metas || []).length === 1 && lockChk.metas[0].id === 'cklive:upgrade') {
+        if (sel) sel.style.display = 'none';
+        const bn = $('livetv-banner'); if (bn) bn.innerHTML = '';
+        chips.innerHTML = '';
+        grid.innerHTML = `<div style="min-height:60vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px;padding:2rem">
+            <div style="font-size:56px">🔒</div>
+            <div style="font-size:26px;font-weight:800">CouchKing Live TV — Locked</div>
+            <div style="font-size:15px;color:#9a9aa4;max-width:420px">Live TV isn't part of your plan. Contact support to unlock it.</div></div>`;
+        return;
+    }
+    if (sel) sel.style.display = '';
     if (sel && !sel._wired) { sel._wired = 1; sel.onchange = () => { lvRegion = sel.value; lvGenre = 'Guide'; lvShowAll = false; livetvPage(); }; }
     const banner = $('livetv-banner');
     if (banner) lvRenderBanner(banner);   // async, fills in when ready
@@ -471,7 +486,7 @@ async function livetvPage() {
     const loadPage = async () => {
         grid.querySelector('.epg-more')?.remove();
         // Stremio extras ride IN the path segment ("genre=X&skip=100.json"), not the query string
-        const path = `/catalog/tv/${S.liveCat.cat.id}/genre=${encodeURIComponent(lvGenre)}${skip ? '&skip=' + skip : ''}.json`;
+        const path = `/catalog/tv/${S.liveCat.cat.id}/genre=${encodeURIComponent(lvGenre.replace('24/7','24-7'))}${skip ? '&skip=' + skip : ''}.json`;
         const d = await j(S.liveCat.base + path);
         if (my !== _lvCatalogGen) return;   // user switched chips mid-load
         const metas = d?.metas || [];
@@ -623,7 +638,7 @@ async function tmdbRow(kind, path, pages = 3, cap = 0) {
 async function cineRow(type, id, genre, pages = 1) {
     const reqs = [];
     for (let p = 0; p < pages; p++) {
-        const g = genre ? `/genre=${encodeURIComponent(genre)}` : '';
+        const g = genre ? `/genre=${encodeURIComponent(genre.replace('24/7','24-7'))}` : '';
         reqs.push(j(`${CINE}/catalog/${type}/${id}${g}${p ? (genre ? '&skip=' + p * 100 : '/skip=' + p * 100) : ''}.json`));
     }
     const out = []; const seen = new Set();
