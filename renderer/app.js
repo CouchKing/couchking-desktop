@@ -578,21 +578,18 @@ setInterval(async () => {
     // a state fetch that failed mid-load (server restart) left every tile badge-less
     // forever — patch eyes/checks onto existing tiles whenever fresh state lands
     try {
-        const st2 = pstate();
-        const wl = new Set((st2.watchlist || []).map(x => x.id));
-        const done = new Set(st2.watchedIds || []);
         document.querySelectorAll('.poster').forEach(po => {
-            const nm = po.querySelector('.pt')?.title;
-            const t = po._ckT; const id = t?.id;
-            if (!id || po.querySelector('.cw-x')) return;   // CW row keeps its ✕, no badges
+            const t = po._ckT;
+            if (!t || po.querySelector('.cw-x')) return;   // CW row keeps its ✕, no badges
             const wrap = po.querySelector('.pwrap'); if (!wrap) return;
+            const { inList, isDone } = markState(t);   // matches TMDB home tiles by name too
             const want = (cls, on, txt) => {
                 let el = wrap.querySelector('.' + cls);
                 if (on && !el) { el = document.createElement('div'); el.className = cls; el.textContent = txt; wrap.appendChild(el); }
                 if (!on && el) el.remove();
             };
-            want('badge-list', wl.has(id), '✓');
-            want('badge-done', done.has(id), '👁');
+            want('badge-list', inList, '✓');
+            want('badge-done', isDone, '👁');
         });
     } catch {}
 }, 60000);
@@ -622,12 +619,22 @@ const IMG = (p, w = 342) => p ? (p.startsWith('http') ? p : `https://image.tmdb.
 // tile = EXACT Firestick card: white bar on a dark track flush at the poster's bottom
 // (only 2–97%), purple ✓ top-right = My List, yellow eye top-left = watched, "+N" =
 // new episodes aired since last watched, single-line ELLIPSIZED centered title below
+function markState(t) {
+    const st = pstate();
+    const nm = (t.name || '').toLowerCase().trim();
+    const ty = t.type || '';
+    const wl = st.watchlist || [];
+    const wt = st.watchedTitles || [];
+    const nameHit = (arr) => nm && arr.some(x => (x.name || '').toLowerCase().trim() === nm && (!x.type || !ty || x.type === ty));
+    const inList = (t.id ? wl.some(x => x.id === t.id) : false) || nameHit(wl);
+    const isDone = (t.id ? (st.watchedIds || []).includes(t.id) : false) || nameHit(wt);
+    return { inList, isDone };
+}
 function posterEl(t, opts = {}) {
     const d = document.createElement('div'); d.className = 'poster';
     const st = pstate();
     const hasBar = opts.pct >= 2 && opts.pct <= 97;
-    const inList = (st.watchlist || []).some(x => x.id === t.id);
-    const isDone = (st.watchedIds || []).includes(t.id);
+    const { inList, isDone } = markState(t);
     d.innerHTML = `<div class="pwrap"><img loading="lazy" src="${t.poster || ''}">`
         + (opts.chip ? `<div class="ep-chip">${opts.chip}</div>` : '')
         + (opts.removable ? `<div class="cw-x" title="Remove from Continue Watching">✕</div>` : '')
