@@ -160,20 +160,24 @@ const _lvTune = async (id) => {   // id = full meta id (cklive:espn) → [{url, 
 // bar pinned to the top of the window, auto-clears after 8s, click to dismiss. Same treatment
 // the apps show, so a blocked Live TV tune reads the same everywhere.
 function lvBanner(msg) {
-    document.getElementById('lv-banner')?.remove();
-    const b = document.createElement('div'); b.id = 'lv-banner';
-    b.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:99999;' +
-        'display:flex;align-items:center;gap:12px;max-width:min(560px,92vw);background:#1B1830;' +
-        'border:1px solid #7B5BF5;border-radius:16px;padding:14px 18px;color:#fff;' +
-        'box-shadow:0 10px 34px rgba(0,0,0,.5);cursor:pointer;font-family:inherit';
-    const ic = document.createElement('span'); ic.textContent = '🔒'; ic.style.fontSize = '20px';
-    const col = document.createElement('div');
-    const t = document.createElement('div'); t.textContent = 'Live TV locked'; t.style.cssText = 'font-weight:800;font-size:15px';
-    const s = document.createElement('div'); s.textContent = msg; s.style.cssText = 'color:#A9A5C0;font-size:13px;margin-top:2px';
-    col.append(t, s); b.append(ic, col);
-    b.onclick = () => b.remove();
-    document.body.appendChild(b);
-    clearTimeout(b._t); b._t = setTimeout(() => { b.remove(); }, 9000);
+    // CENTERED CouchKing-panel modal with an OK button (AJ Sep 18: "in the middle of the
+    // screen with an OK button … on firetv, desktop and web").
+    document.getElementById('lv-lock')?.remove();
+    const scrim = document.createElement('div'); scrim.id = 'lv-lock';
+    scrim.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.72);' +
+        'display:flex;align-items:center;justify-content:center;font-family:inherit';
+    const p = document.createElement('div');
+    p.style.cssText = 'background:#1B1830;border:1px solid #7B5BF5;border-radius:20px;padding:28px 26px;' +
+        'max-width:min(420px,88vw);text-align:center;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,.6)';
+    const ic = document.createElement('div'); ic.textContent = '🔒'; ic.style.fontSize = '42px';
+    const t = document.createElement('div'); t.textContent = 'Live TV locked'; t.style.cssText = 'font-weight:800;font-size:20px;margin-top:10px';
+    const s = document.createElement('div'); s.textContent = msg; s.style.cssText = 'color:#A9A5C0;font-size:14px;margin:8px 0 18px';
+    const ok = document.createElement('button'); ok.textContent = 'OK';
+    ok.style.cssText = 'background:#7B5BF5;color:#fff;border:0;border-radius:12px;padding:11px 34px;font-size:15px;font-weight:700;cursor:pointer';
+    ok.onclick = () => scrim.remove();
+    p.append(ic, t, s, ok); scrim.appendChild(p);
+    scrim.onclick = (e) => { if (e.target === scrim) scrim.remove(); };
+    document.body.appendChild(scrim); ok.focus();
 }
 async function _lvPlayCh(id, name, guideList, busyEl) {
     busyEl?.classList.add('busy');
