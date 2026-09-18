@@ -589,7 +589,7 @@ setInterval(async () => {
                 if (!on && el) el.remove();
             };
             want('badge-list', inList, '✓');
-            want('badge-done', isDone, '👁');
+            want('badge-done', isDone, '✓');
         });
     } catch {}
 }, 60000);
@@ -639,7 +639,7 @@ function posterEl(t, opts = {}) {
         + (opts.chip ? `<div class="ep-chip">${opts.chip}</div>` : '')
         + (opts.removable ? `<div class="cw-x" title="Remove from Continue Watching">✕</div>` : '')
         + (inList && !opts.removable ? '<div class="badge-list">✓</div>' : '')
-        + (isDone && !opts.removable ? '<div class="badge-done">👁</div>' : '')
+        + (isDone && !opts.removable ? '<div class="badge-done">✓</div>' : '')
         + (opts.newEps > 0 ? `<div class="badge-new">+${opts.newEps}</div>` : '')
         + (hasBar ? `<div class="bar"><div style="width:${opts.pct}%"></div></div>` : '')
         + `</div>`

@@ -81,9 +81,9 @@ select:focus, select:hover { border-color:var(--accent); }
                       background:var(--accent); color:#fff; font-size:.75rem; font-weight:900;
                       display:flex; align-items:center; justify-content:center; box-shadow:0 1px 6px #0008; }
 .poster .badge-done { position:absolute; top:.4rem; left:.4rem; width:24px; height:24px; border-radius:50%;
-                      background:#f5c518; font-size:.72rem; display:flex; align-items:center; justify-content:center; }
+                      background:#f5c518; color:#0C0B14; font-weight:900; font-size:.75rem; display:flex; align-items:center; justify-content:center; box-shadow:0 1px 6px #0008; }
 /* "+N": new episodes aired since they last watched this show (synced newEpsSeen) */
-.poster .badge-new { position:absolute; top:.4rem; left:.4rem; background:var(--accent); color:#fff;
+.poster .badge-new { position:absolute; bottom:.9rem; left:.4rem; background:var(--accent); color:#fff;
                      font-size:.72rem; font-weight:900; padding:.14rem .45rem; border-radius:99px;
                      box-shadow:0 1px 6px #0008; }
 .poster .cw-x { position:absolute; top:.4rem; right:.4rem; width:26px; height:26px; border-radius:50%;
