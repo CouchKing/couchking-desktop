@@ -156,6 +156,18 @@ const _lvTune = async (id) => {   // id = full meta id (cklive:espn) → [{url, 
     const s = await j(S.liveCat.base + `/stream/tv/${encodeURIComponent(id)}.json`);
     return (s?.streams || []).map(x => ({ url: x.url, ts: x.ckTs === 1 })).filter(x => x.url);
 };
+// Top BANNER (AJ Sep 18: "banner across all things when the device limit is reached") — red
+// bar pinned to the top of the window, auto-clears after 8s, click to dismiss. Same treatment
+// the apps show, so a blocked Live TV tune reads the same everywhere.
+function lvBanner(msg) {
+    let b = document.getElementById('lv-banner');
+    if (!b) { b = document.createElement('div'); b.id = 'lv-banner'; document.body.appendChild(b); }
+    b.textContent = msg;
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#C0392B;color:#fff;' +
+        'font-weight:600;text-align:center;padding:12px 16px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.4)';
+    b.onclick = () => b.remove();
+    clearTimeout(b._t); b._t = setTimeout(() => { b.remove(); }, 8000);
+}
 async function _lvPlayCh(id, name, guideList, busyEl) {
     busyEl?.classList.add('busy');
     try {
@@ -205,10 +217,10 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
                     const gr = await fetch(gateUrl, { method: 'GET' });
                     if (gr.status === 429 || gr.status === 503 || gr.status === 403) {
                         const reason = (await gr.text().catch(() => '')).trim();
-                        toast(reason || (gr.status === 429
+                        lvBanner('🔒  ' + (reason || (gr.status === 429
                             ? "You're already watching Live TV on another device. Stop that stream to watch here."
                             : gr.status === 503 ? 'Live TV is at full capacity right now — try again in a couple minutes.'
-                            : 'Live TV isn’t available on your account.'));
+                            : 'Live TV isn’t available on your account.')));
                         return;
                     }
                     try { gr.body?.cancel?.(); } catch {}   // status only — don't download the stream
