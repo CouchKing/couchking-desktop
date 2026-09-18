@@ -160,13 +160,20 @@ const _lvTune = async (id) => {   // id = full meta id (cklive:espn) → [{url, 
 // bar pinned to the top of the window, auto-clears after 8s, click to dismiss. Same treatment
 // the apps show, so a blocked Live TV tune reads the same everywhere.
 function lvBanner(msg) {
-    let b = document.getElementById('lv-banner');
-    if (!b) { b = document.createElement('div'); b.id = 'lv-banner'; document.body.appendChild(b); }
-    b.textContent = msg;
-    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#C0392B;color:#fff;' +
-        'font-weight:600;text-align:center;padding:12px 16px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.4)';
+    document.getElementById('lv-banner')?.remove();
+    const b = document.createElement('div'); b.id = 'lv-banner';
+    b.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:99999;' +
+        'display:flex;align-items:center;gap:12px;max-width:min(560px,92vw);background:#1B1830;' +
+        'border:1px solid #7B5BF5;border-radius:16px;padding:14px 18px;color:#fff;' +
+        'box-shadow:0 10px 34px rgba(0,0,0,.5);cursor:pointer;font-family:inherit';
+    const ic = document.createElement('span'); ic.textContent = '🔒'; ic.style.fontSize = '20px';
+    const col = document.createElement('div');
+    const t = document.createElement('div'); t.textContent = 'Live TV locked'; t.style.cssText = 'font-weight:800;font-size:15px';
+    const s = document.createElement('div'); s.textContent = msg; s.style.cssText = 'color:#A9A5C0;font-size:13px;margin-top:2px';
+    col.append(t, s); b.append(ic, col);
     b.onclick = () => b.remove();
-    clearTimeout(b._t); b._t = setTimeout(() => { b.remove(); }, 8000);
+    document.body.appendChild(b);
+    clearTimeout(b._t); b._t = setTimeout(() => { b.remove(); }, 9000);
 }
 async function _lvPlayCh(id, name, guideList, busyEl) {
     busyEl?.classList.add('busy');
@@ -217,10 +224,10 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
                     const gr = await fetch(gateUrl, { method: 'GET' });
                     if (gr.status === 429 || gr.status === 503 || gr.status === 403) {
                         const reason = (await gr.text().catch(() => '')).trim();
-                        lvBanner('🔒  ' + (reason || (gr.status === 429
-                            ? "You're already watching Live TV on another device. Stop that stream to watch here."
+                        lvBanner(reason || (gr.status === 429
+                            ? 'All your Live TV device slots are in use — someone on your plan is already watching. Stop that stream, or add more devices to your plan.'
                             : gr.status === 503 ? 'Live TV is at full capacity right now — try again in a couple minutes.'
-                            : 'Live TV isn’t available on your account.')));
+                            : 'Live TV isn’t part of your plan.'));
                         return;
                     }
                     try { gr.body?.cancel?.(); } catch {}   // status only — don't download the stream
