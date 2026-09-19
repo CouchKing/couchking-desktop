@@ -751,8 +751,29 @@ function profileMix(items) {
     }
     return a;
 }
-// For You — SAME consensus ranking as the TV app (votes across your watched/library seeds)
+// For You — prefer the addon server's PERSONALIZED catalog: the SAME source the TV/mobile
+// app uses (real per-profile watch-history weighting + daily respin), so a signed-in user
+// gets an identical, truly-personal For You on desktop. Guests — or a service that returns
+// nothing — fall through to the client-side TMDB consensus below. (AJ Sep 19: the desktop/web
+// For You was a generic consensus while the apps had the personalized server one.)
+const _fyManifest = {};
+async function forYouAddon(kind) {
+    if (!hasService()) return [];
+    const base = S.addons[0].url.replace(/\/$/, '');
+    const stype = kind === 'tv' ? 'series' : 'movie';
+    // discover the catalog id from the manifest (matches the TV app), with the known
+    // couchking id as the fallback if the manifest can't be read
+    let catId = 'couchking-foryou-' + (kind === 'tv' ? 'series' : 'movies');
+    const man = _fyManifest[base] || (_fyManifest[base] = await j(`${base}/manifest.json`));
+    const hit = (man?.catalogs || []).find(c => c.type === stype && /for you/i.test(c.name || ''));
+    if (hit?.id) catId = hit.id;
+    const d = await j(`${base}/catalog/${stype}/${encodeURIComponent(catId)}.json`);
+    return (d?.metas || []).map(m => ({ id: m.id, type: stype, name: m.name, poster: m.poster }));
+}
+// consensus ranking (votes across your watched/library seeds) — TV app's fallback, and ours
 async function forYouRow(kind) {
+    const fromAddon = await forYouAddon(kind).catch(() => []);
+    if (fromAddon.length) return fromAddon;
     const st = pstate();
     const lib = [...(st.continue || []), ...(st.watchlist || []), ...(st.watchedTitles || [])];
     const seeds = lib.filter(t => kind === 'tv' ? t.type === 'series' : t.type !== 'series')
