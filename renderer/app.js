@@ -1016,23 +1016,14 @@ async function home() {
     const top10Holder = document.createElement('div'); rows.appendChild(top10Holder);
     top10Row(top10Holder);
     // rows land IN CATALOG ORDER via pre-placed slots (async fills used to append in
-    // completion order — the board shuffled on every load and looked nothing like the TV).
-    // Each slot opens as a SKELETON (label + gray tiles) so the whole page exists and
-    // scrolls instantly (AJ Sep 24: "my rows in my order, scroll down instantly") —
-    // posters swap in as each row's fetch lands.
-    const slot = (label) => {
-        const s = document.createElement('div');
-        s.innerHTML = `<div class="row-label">${(label || '').replace(/</g, '&lt;')}</div>
-            <div class="strip">${'<div class="skel-tile"></div>'.repeat(8)}</div>`;
-        rows.appendChild(s); return s;
-    };
+    // completion order — the board shuffled on every load and looked nothing like the TV)
+    const slot = () => { const s = document.createElement('div'); rows.appendChild(s); return s; };
     const fill = (holder, label, items) => {
         if (!items?.length) { holder.remove(); return; }
-        holder.innerHTML = '';
         addRow(label, items, null, holder);
     };
     if (!S.guest) {
-        const fm = slot('For You — Movies'), fs = slot('For You — Series');
+        const fm = slot(), fs = slot();
         forYouRow('movie').then(x => fill(fm, 'For You — Movies', x));
         forYouRow('tv').then(x => fill(fs, 'For You — Series', x));
     }
@@ -1042,7 +1033,7 @@ async function home() {
     for (const label of enabled) {
         const r = CK_CAT.SHELF_CATALOG.find(x => x.label === label);
         if (!r) continue;
-        const s = slot(r.label);
+        const s = slot();
         rowItems(r).then(items => fill(s, r.label, items));
     }
 }
