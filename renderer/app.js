@@ -1137,6 +1137,8 @@ async function detail(t) {
           <button class="ghost hidden" id="d-trailer">🎬 Trailer</button>
           <button class="ghost" id="d-list"></button>
           <button class="ghost" id="d-watched"></button>
+          <button class="ghost" id="d-up" title="Thumbs up — For You shows more like this"></button>
+          <button class="ghost" id="d-down" title="Thumbs down — hidden from For You"></button>
         </div>
         <div id="d-cast" class="cast-row"></div>
         <div id="d-wtw" class="wtw"></div>
@@ -1162,9 +1164,14 @@ async function detail(t) {
         const st = pstate();
         $('d-list').textContent = (st.watchlist || []).some(x => x.id === imdb) ? '✓ In My List' : '+ My List';
         $('d-watched').textContent = (st.watchedIds || []).includes(imdb) ? '✓ Watched' : 'Mark watched';
+        const rv = ((st.ratings || {})[imdb] || {}).v || 0;
+        $('d-up').textContent = rv === 1 ? '👍 Liked' : '👍';
+        $('d-down').textContent = rv === -1 ? '👎 Not for me' : '👎';
     };
     $('d-list').onclick = () => { if (S.guest) return gate('My List syncs across your devices with a free account.'); toggleList(tt); paintBtns(); };
     $('d-watched').onclick = () => { if (S.guest) return gate('Watch history syncs across your devices with a free account.'); toggleWatchedTitle(tt); paintBtns(); };
+    $('d-up').onclick = () => { if (S.guest) return gate('Ratings shape your For You with a free account.'); setRating(imdb, 1); paintBtns(); };
+    $('d-down').onclick = () => { if (S.guest) return gate('Ratings shape your For You with a free account.'); setRating(imdb, -1); paintBtns(); };
     paintBtns();
     if (!hasService()) whereToWatch(imdb, t.type);   // tracker shell: providers, not streams
     if (t.type === 'movie') {
@@ -2109,6 +2116,15 @@ function toggleWatchedTitle(t) {
     if (has) { st.watchedIds = st.watchedIds.filter(x => x !== t.id); st.watchedTitles = st.watchedTitles.filter(x => x.id !== t.id); st.removedTs = stamp(st.removedTs, 'wt:' + t.id); }
     else { st.watchedIds.push(t.id); st.watchedTitles.unshift({ id: t.id, type: t.type, name: t.name, poster: t.poster || '' }); st.addedTs = stamp(st.addedTs, t.id); st.addedTs = stamp(st.addedTs, 'wt:' + t.id); }
     pushAccount(); return !has;
+}
+// Thumbs (AJ Sep 25): per-profile { v: 1|-1|0, ts } — tapping the active thumb clears it.
+// Newest-ts wins in every merge (stale devices can't clobber); the server drops the For You
+// cache on push so the row reshapes immediately.
+function setRating(id, v) {
+    const st = pstate(); st.ratings = st.ratings || {};
+    const cur = (st.ratings[id] || {}).v || 0;
+    st.ratings[id] = { v: cur === v ? 0 : v, ts: Date.now() };
+    pushAccount();
 }
 
 // ---------- settings — EXACT page parity with the phone/Firestick (MainActivity

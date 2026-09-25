@@ -1,7 +1,7 @@
 {
   "name": "couchking-desktop",
   "productName": "CouchKing",
-  "version": "0.9.38",
+  "version": "0.9.39",
   "description": "CouchKing for Windows and macOS",
   "main": "main.js",
   "scripts": {
