@@ -1389,6 +1389,7 @@ async function episodePage(t, meta, ep, autoplay = false) {
     if (autoplay && auto0) playEpisodeStream(auto0, meta, ep, sid, label);
 }
 function playEpisodeStream(s, meta, ep, sid, label) {
+    ckEpTouched = false;   // fresh episode, fresh still-watching slate
     // Continue Watching means you PLAYED it — not that you looked at the page
     if (!S.guest) {
         pushContinueLocal({ id: meta.id, type: 'series', name: meta.name, poster: meta.poster || '' });
@@ -1744,9 +1745,73 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     if (page === 'detail' && cur?.meta && p.s) seasons(cur.meta);
     // AUTOPLAY NEXT: an explicit next-click always advances; a natural finish advances
     // when the setting is on and the episode really ended
-    if (p.s && (next || (PREF('autonext', true) && watchedNow && pos >= dur - 5)))
-        advanceNext(p);
+    if (p.s && (next || (PREF('autonext', true) && watchedNow && pos >= dur - 5))) {
+        // "ARE YOU STILL WATCHING?" (AJ Sep 25): two whole episodes with zero inputs →
+        // ask before the third. Any key/click/tap during an episode resets the chain and
+        // an explicit next-click resets it too — normal watching can never summon it.
+        if (next) { ckIdleEps = 0; advanceNext(p); }
+        else {
+            if (ckEpTouched) ckIdleEps = 0; else ckIdleEps++;
+            if (ckIdleEps >= 2) ckStillWatching(p); else advanceNext(p);
+        }
+    }
 });
+let ckIdleEps = 0, ckEpTouched = false;
+for (const ev of ['pointerdown', 'keydown', 'touchstart', 'wheel'])
+    document.addEventListener(ev, () => { ckEpTouched = true; }, true);
+function ckStillWatching(p) {
+    if (document.getElementById('ck-staywatch')) return;
+    const ov = document.createElement('div');
+    ov.id = 'ck-staywatch';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(8,6,20,.88);display:flex;align-items:center;justify-content:center;';
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#1B1830;border-radius:18px;padding:26px 30px;max-width:360px;width:90%;text-align:center;';
+    const title = document.createElement('div');
+    title.style.cssText = 'color:#fff;font-size:1.2rem;font-weight:700;';
+    title.textContent = 'Are you still watching?';
+    card.appendChild(title);
+    const name = (cur?.meta?.name || p.label || '').toString();
+    if (name) {
+        const sub = document.createElement('div');
+        sub.style.cssText = 'color:#A9A5C0;font-size:.95rem;margin-top:8px;';
+        sub.textContent = name;
+        card.appendChild(sub);
+    }
+    const mkBtn = (label, bg) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = `display:block;width:100%;margin-top:12px;padding:12px;border:none;border-radius:12px;background:${bg};color:#fff;font-weight:700;font-size:1rem;cursor:pointer;`;
+        b.onfocus = () => b.style.outline = '2px solid #fff';
+        b.onblur = () => b.style.outline = 'none';
+        card.appendChild(b);
+        return b;
+    };
+    const keep = mkBtn('▶  Keep watching', '#7B5BF5');
+    const done = mkBtn("I'm done for now", '#2C2649');
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    let ended = false;
+    let tm = 0;
+    const close = () => { ended = true; clearTimeout(tm); window.removeEventListener('keydown', trap, true); ov.remove(); };
+    keep.onclick = (e) => { e.stopPropagation(); close(); ckIdleEps = 0; ckEpTouched = false; advanceNext(p); };
+    done.onclick = (e) => { e.stopPropagation(); close(); try { ckStop(); } catch {} };
+    // MODAL (AJ: "the only buttons you can click — it won't fall behind"): every key is
+    // trapped up here; arrows/tab hop between the two buttons, everything else is eaten,
+    // and the full-screen scrim swallows clicks so nothing behind is reachable.
+    const trap = (e) => {
+        if (ended) return;
+        e.stopImmediatePropagation();
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.key)) {
+            e.preventDefault(); (document.activeElement === keep ? done : keep).focus();
+        } else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault(); (document.activeElement === done ? done : keep).click();
+        } else e.preventDefault();
+    };
+    window.addEventListener('keydown', trap, true);
+    keep.focus();
+    // walked away: stop the stream after 5 minutes instead of playing to an empty room
+    tm = setTimeout(() => { if (!ended) { close(); try { ckStop(); } catch {} } }, 5 * 60 * 1000);
+}
 function advanceNext(p) {
     const nxt = p.next || nextEpisodeOf(p.sid);
     if (!nxt || !cur?.meta) return;
