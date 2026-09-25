@@ -208,6 +208,9 @@ select:focus, select:hover { border-color:var(--accent); }
 #web-player .wp-ui { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:space-between;
                      transition:opacity .25s ease; pointer-events:none; }
 #web-player .wp-ui.idle { opacity:0; }
+/* faded-out controls must not eat taps — an invisible Favorite/Guide button firing on a
+   blind tap is worse than no controls at all (mobile live TV, AJ Sep 24) */
+#web-player .wp-ui.idle > * { pointer-events:none; }
 #web-player .wp-ui > * { pointer-events:auto; }
 #web-player .wp-top { display:flex; align-items:center; gap:1rem; padding:1rem 1.2rem;
                       background:linear-gradient(180deg,#000C, transparent); }

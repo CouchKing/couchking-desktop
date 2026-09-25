@@ -762,6 +762,24 @@
         const ckEl = player.querySelector('.wp-clock');
         ckEl.textContent = clock(new Date());
         state.tick = setInterval(() => { if (player) ckEl.textContent = clock(new Date()); }, 30000);
+        // controls fade like the VOD player (AJ Sep 24 mobile: "you can't get rid of the
+        // player UI"): 3s idle hides them, mouse move wakes them, tapping the video
+        // toggles them. Stay up while paused or while the guide panel is open.
+        const ui = player.querySelector('.wp-ui');
+        let hideT = null;
+        const wake = () => {
+            ui.classList.remove('idle');
+            clearTimeout(hideT);
+            hideT = setTimeout(() => {
+                if (!v.paused && gp.classList.contains('hidden')) ui.classList.add('idle');
+            }, 3000);
+        };
+        player.addEventListener('mousemove', wake); wake();
+        // a tap fires compat mousemove (= wake) BEFORE click, so snapshot the state at
+        // pointerdown — else tap-to-show would instantly re-hide what it just showed
+        let wasIdle = false;
+        player.addEventListener('pointerdown', () => { wasIdle = ui.classList.contains('idle'); });
+        v.onclick = () => { if (wasIdle) wake(); else { clearTimeout(hideT); ui.classList.add('idle'); } };
         document.addEventListener('keydown', function esc(e) {
             if (!player) { document.removeEventListener('keydown', esc); return; }
             if (e.key === 'Escape') { bail(); document.removeEventListener('keydown', esc); }
