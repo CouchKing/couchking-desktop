@@ -252,7 +252,10 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
                        guide: guideList, onTune: async (cid) => {
                            const st = await _lvTune(cid);
                            return { hls: st.filter(x => !x.ts).map(x => x.url), ts: st.find(x => x.ts)?.url || '' };
-                       } });
+                       },
+                       // back from the player: repaint so the red now-line + current blocks
+                       // reflect NOW, not tune time (AJ Sep 24)
+                       onClose: () => { if (page === 'livetv') livetvPage(); } });
     } finally { busyEl?.classList.remove('busy'); }
 }
 // ---- CLASSIC GUIDE GRID (AJ Sep 17 "like im on a classic tv box"): sticky channel column,
@@ -282,14 +285,18 @@ async function lvRenderGuide(grid) {
     // current half hour; future days = full day from 6 AM. EPG feed carries ~3 days.
     const dayStart = (offset) => { const dt = new Date(now + offset * 86400e3); dt.setHours(offset ? 6 : 0, 0, 0, 0);
         return offset ? dt.getTime() : Math.floor(now / 1800e3) * 1800e3; };
-    const t0 = dayStart(lvDay), SLOTS = lvDay ? 36 : 48, tEnd = t0 + SLOTS * 1800e3;
+    // Today scrolls 72h straight through (144 half-hour slots), day tabs = full-24h jumps
+    // (AJ Sep 25 "when i scroll doesn't go out like 3 days")
+    const t0 = dayStart(lvDay), SLOTS = lvDay ? 48 : 144, tEnd = t0 + SLOTS * 1800e3;
     const fmtT = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     const x = ms => Math.max(0, (ms - t0) / 1800e3 * SLOTW);
     const chans = d.channels;
     const guideList = chans.map(c => ({ id: 'cklive:' + c.id, name: c.name, now: (c.progs.find(p => p.s <= now && p.e > now) || {}).t || '' }));
     const rec = (d.recent || []).map(id => d.channels.find(c => c.id === id)).filter(Boolean);
     const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-    let h = '<div class="lv-days">' + [0, 1, 2].map(o => {
+    // 4 day tabs (AJ Sep 25): from a Thursday, 3 tabs stopped at Saturday — Sunday games
+    // need their own tab; server ships 96h of listings now
+    let h = '<div class="lv-days">' + [0, 1, 2, 3].map(o => {
         const label = o === 0 ? 'Today' : o === 1 ? 'Tomorrow'
             : new Date(now + o * 86400e3).toLocaleDateString('en-US', { weekday: 'long' });
         return `<button class="lv-chip${o === lvDay ? ' on' : ''}" data-day="${o}">${label}</button>`;
@@ -322,7 +329,9 @@ async function lvRenderGuide(grid) {
     const favRows = chans.filter(c => favs.has(c.id));
     const rest = chans.filter(c => !favs.has(c.id));
     if (favRows.length) { h += secHdr('★ Favorites'); for (const c of favRows) h += rowHtml(c); }
-    const LIMIT = lvShowAll ? Infinity : 150;
+    // 500 (was 150): games ride at the BOTTOM of the grid now (AJ Sep 25) — a 150 cap
+    // would hide them behind the Show-all click; ~330 HTML rows render fine
+    const LIMIT = lvShowAll ? Infinity : 500;
     let lastSec = null, shown = 0;
     for (const c of rest) {
         if (shown >= LIMIT) break;
@@ -756,6 +765,19 @@ function profileMix(items) {
 // gets an identical, truly-personal For You on desktop. Guests — or a service that returns
 // nothing — fall through to the client-side TMDB consensus below. (AJ Sep 19: the desktop/web
 // For You was a generic consensus while the apps had the personalized server one.)
+// Swap the active profile ("Name #ab12" = S.useg) into the addon URL's config segment —
+// same as the TV app's Addons.withUser — so the service logs clicks and personalizes
+// For You per PROFILE, not per account (AJ Sep 24). Guest / non-config URL → unchanged.
+function withUser(url) {
+    if (!S.useg) return url;
+    try {
+        const i = url.lastIndexOf('/');
+        const cfg = JSON.parse(decodeURIComponent(url.slice(i + 1)));
+        if (!cfg.subKey) return url;
+        cfg.userName = S.useg;
+        return url.slice(0, i + 1) + encodeURIComponent(JSON.stringify(cfg));
+    } catch { return url; }
+}
 const _fyManifest = {};
 async function forYouAddon(kind) {
     if (!hasService()) return [];
@@ -767,7 +789,7 @@ async function forYouAddon(kind) {
     const man = _fyManifest[base] || (_fyManifest[base] = await j(`${base}/manifest.json`));
     const hit = (man?.catalogs || []).find(c => c.type === stype && /for you/i.test(c.name || ''));
     if (hit?.id) catId = hit.id;
-    const d = await j(`${base}/catalog/${stype}/${encodeURIComponent(catId)}.json`);
+    const d = await j(`${withUser(base)}/catalog/${stype}/${encodeURIComponent(catId)}.json`);
     return (d?.metas || []).map(m => ({ id: m.id, type: stype, name: m.name, poster: m.poster }));
 }
 // consensus ranking (votes across your watched/library seeds) — TV app's fallback, and ours
@@ -1341,7 +1363,7 @@ async function episodePage(t, meta, ep, autoplay = false) {
     const base = S.addons[0].url.replace(/\/$/, '');
     let streams = [], tries = 0;
     const fetchStreams = async () =>
-        (await j(`${base}/stream/series/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 }))?.streams || [];
+        (await j(`${withUser(base)}/stream/series/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 }))?.streams || [];
     streams = await fetchStreams();
     const aired = !ep.released || new Date(ep.released) <= new Date();
     while (!streams.length && aired && tries < 12 && token === epPollToken && page === 'episode') {
@@ -1418,7 +1440,7 @@ async function pickStream(sid, label, autoFirst = false) {
     holder.innerHTML = '<div class="muted">Finding streams…</div>';
     const base = S.addons[0].url.replace(/\/$/, '');
     const type = sid.includes(':') ? 'series' : 'movie';
-    const d = await j(`${base}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
+    const d = await j(`${withUser(base)}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
     const streams = d?.streams || [];
     if (!streams.length) { holder.innerHTML = '<div class="muted">Getting this ready — try again in a minute.</div>'; return; }
     const start = (st) => {
@@ -1461,7 +1483,7 @@ async function downloadFor(sid, label, meta) {
     toast('Finding a stream…');
     const base = S.addons[0].url.replace(/\/$/, '');
     const type = sid.includes(':') ? 'series' : 'movie';
-    const d = await j(`${base}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
+    const d = await j(`${withUser(base)}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
     const st = (d?.streams || [])[0];
     if (!st) { toast('No stream to download yet — try again shortly'); return; }
     startDownload(st, sid, label);
@@ -2365,6 +2387,7 @@ function addonsPage() {
             const row = settingRow(a.name || 'Addon', ix === 0 ? 'Connected · primary' : 'Remove', ix === 0 ? null : () => {
                 S.addons.splice(ix, 1);
                 const st = pstate(); st.addons = S.addons; pushAccount();
+                livetvDetect();   // Live TV tab leaves with the addon — no reload needed
                 addonsPage();
             });
             body.appendChild(row);
@@ -2385,6 +2408,7 @@ function addonsPage() {
             if (S.addons.some(x => x.url === u)) { inp.value = ''; inp.placeholder = 'Already added'; return; }
             S.addons.push({ url: u, name: man.name || 'Addon' });
             const st = pstate(); st.addons = S.addons; pushAccount();
+            livetvDetect();   // Live TV tab appears the moment the addon lands — no reload
             addonsPage();
         };
         wrap.append(inp, btn); body.appendChild(wrap);

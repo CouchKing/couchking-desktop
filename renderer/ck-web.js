@@ -569,7 +569,8 @@
     // everywhere else hls.js attaches to the same <video>. No /webplay remux (that path is
     // for files), no seeking, auto-failover to the channel's backup urls on fatal error.
     async function livePlay({ url, title, backups = [], guide = [], onTune = null, logo = '', now = '',
-                              chid = '', fav = false, onFav = null, isFav = null, tsUrl = '' }) {
+                              chid = '', fav = false, onFav = null, isFav = null, tsUrl = '',
+                              onClose = null }) {
         closePlayer(false);
         engine = 'web';
         state = { offset: 0, dur: 0 };
@@ -701,7 +702,10 @@
         // channel — their raw feed is the broken part). .ts hub = fallback only.
         if (sources[0]) await attach(sources[0]); else if (tsCur) await playTs(tsCur);
         armDog();
-        const bail = () => { clearTimeout(dogT); clearTimeout(stallT); stopMp(); try { state?.hls?.destroy(); } catch {} engine = null; closePlayer(false); };
+        const bail = () => { clearTimeout(dogT); clearTimeout(stallT); stopMp(); try { state?.hls?.destroy(); } catch {} engine = null; closePlayer(false);
+            // the guide under the player froze at tune time — let the page re-align its
+            // red now-line (AJ Sep 24: "doesn't update unless you update the page")
+            try { onClose && onClose(); } catch {} };
         player.querySelector('.wp-back').onclick = bail;
         // GUIDE while watching (AJ Sep 17): side panel of the current category's channels
         // with what's on now — click = tune straight over, playback never closes
