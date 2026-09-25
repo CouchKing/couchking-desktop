@@ -1765,9 +1765,13 @@ function ckStillWatching(p) {
     ov.id = 'ck-staywatch';
     ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(8,6,20,.88);display:flex;align-items:center;justify-content:center;';
     const card = document.createElement('div');
-    card.style.cssText = 'background:#1B1830;border-radius:18px;padding:26px 30px;max-width:360px;width:90%;text-align:center;';
+    card.style.cssText = 'background:#1B1830;border:1px solid #2C2649;border-radius:22px;padding:30px 34px 24px;max-width:380px;width:90%;text-align:center;box-shadow:0 12px 60px rgba(123,91,245,.28);';
+    const crown = document.createElement('div');
+    crown.style.cssText = 'font-size:2.3rem;line-height:1;margin-bottom:10px;';
+    crown.textContent = '\u{1F451}';
+    card.appendChild(crown);
     const title = document.createElement('div');
-    title.style.cssText = 'color:#fff;font-size:1.2rem;font-weight:700;';
+    title.style.cssText = 'color:#fff;font-size:1.25rem;font-weight:700;';
     title.textContent = 'Are you still watching?';
     card.appendChild(title);
     const name = (cur?.meta?.name || p.label || '').toString();
@@ -1780,14 +1784,18 @@ function ckStillWatching(p) {
     const mkBtn = (label, bg) => {
         const b = document.createElement('button');
         b.textContent = label;
-        b.style.cssText = `display:block;width:100%;margin-top:12px;padding:12px;border:none;border-radius:12px;background:${bg};color:#fff;font-weight:700;font-size:1rem;cursor:pointer;`;
+        b.style.cssText = `display:block;width:100%;margin-top:12px;padding:13px;border:none;border-radius:999px;background:${bg};color:#fff;font-weight:700;font-size:1rem;cursor:pointer;`;
         b.onfocus = () => b.style.outline = '2px solid #fff';
         b.onblur = () => b.style.outline = 'none';
         card.appendChild(b);
         return b;
     };
-    const keep = mkBtn('▶  Keep watching', '#7B5BF5');
+    const keep = mkBtn('Keep watching', '#7B5BF5');
     const done = mkBtn("I'm done for now", '#2C2649');
+    const hint = document.createElement('div');
+    hint.style.cssText = 'color:#6A6590;font-size:.8rem;margin-top:14px;';
+    hint.textContent = "No answer in 5 minutes and we'll tuck the stream in for the night \u{1F634}";
+    card.appendChild(hint);
     ov.appendChild(card);
     document.body.appendChild(ov);
     let ended = false;
@@ -1810,7 +1818,7 @@ function ckStillWatching(p) {
     window.addEventListener('keydown', trap, true);
     keep.focus();
     // walked away: stop the stream after 5 minutes instead of playing to an empty room
-    tm = setTimeout(() => { if (!ended) { close(); try { ckStop(); } catch {} } }, 5 * 60 * 1000);
+    tm = setTimeout(() => { if (!ended) { close(); try { ckStop(); } catch {} try { profileManager(); } catch {} } }, 5 * 60 * 1000);   // timeout -> who's watching (AJ Sep 25)
 }
 function advanceNext(p) {
     const nxt = p.next || nextEpisodeOf(p.sid);
