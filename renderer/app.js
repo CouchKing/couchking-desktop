@@ -729,11 +729,15 @@ async function rowItems(r) {
     if (r.ids) return idsRow(r.type, r.ids);   // curated watch orders: EXACT order, never shuffled
     // theme category spanning both types (Superheroes/Zombies/…): movies + shows interleaved
     if (r.tvTmdb && r.tmdb) {
-        const [mv, tv] = await Promise.all([tmdbRow('movie', r.tmdb), tmdbRow('tv', r.tvTmdb)]);
+        // pages=2 mirrors the web build + the TV app's tmdbBoth() (same input → same profileMix order)
+        const [mv, tv] = await Promise.all([tmdbRow('movie', r.tmdb, 2), tmdbRow('tv', r.tvTmdb, 2)]);
         const out = []; const n = Math.max(mv.length, tv.length);
         for (let i = 0; i < n; i++) { if (mv[i]) out.push(mv[i]); if (tv[i]) out.push(tv[i]); }
+        // dedupe by type+TMDB id — these items carry .tmdb, NOT .id, so keying on x.id
+        // (undefined for all of them) collapsed every themed row to a single tile
+        // (AJ Sep 27 "zombies / time travel / superhero rows only have one item")
         const seen = new Set();
-        return profileMix(out.filter(x => x && !seen.has(x.id) && seen.add(x.id)));
+        return profileMix(out.filter(x => { const k = x.id || x.type + ':' + x.tmdb; return x && !seen.has(k) && seen.add(k); }));
     }
     if (r.tmdb) return profileMix(await tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb));
     return profileMix(await cineRow(r.type, r.cine, r.genre, 2));
@@ -1132,7 +1136,6 @@ async function detail(t) {
         <div class="d-meta">${meta.year || ''}${meta.runtime ? ' · ' + meta.runtime : ''} · ⭐ ${meta.imdbRating || '—'}${(meta.genres || []).length ? ' · ' + meta.genres.slice(0, 3).join(', ') : ''}</div>
         <div class="d-desc">${meta.description || ''}</div>
         <div class="d-btns">
-          ${t.type === 'movie' && hasService() ? `<button class="primary" id="d-play">▶ ${moviePct > 0 && moviePct < 92 ? `Resume · ${moviePct}%` : 'Play'}</button>` : ''}
           ${t.type === 'movie' && hasService() && ck.dlStart ? `<button class="ghost" id="d-download">⬇ Download</button>` : ''}
           <button class="ghost hidden" id="d-trailer">🎬 Trailer</button>
           <button class="ghost" id="d-list"></button>
@@ -1175,7 +1178,10 @@ async function detail(t) {
     paintBtns();
     if (!hasService()) whereToWatch(imdb, t.type);   // tracker shell: providers, not streams
     if (t.type === 'movie') {
-        if (hasService()) $('d-play').onclick = () => pickStream(imdb, meta.name);
+        // AJ Sep 27: no Play gate on movies — the stream list loads inline the moment the
+        // page opens (Stremio behavior, same as episode pages). Clicking a stream resumes
+        // from the saved position; the Resume/CW hero path still auto-plays the top stream.
+        if (hasService()) pickStream(imdb, meta.name);
         // Download entry point right on the page (AJ: "no download option in desktop") —
         // a movie poster auto-plays the first stream, so the per-stream ⬇ was never seen.
         // This resolves the best stream, then runs the same lean-pick download flow.

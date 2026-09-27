@@ -59,7 +59,10 @@ select:focus, select:hover { border-color:var(--accent); }
 #hero .hero-btns { display:flex; gap:.6rem; }
 
 .row-label { font-size:1.1rem; font-weight:800; margin:1.1rem 0 .55rem; }
-.strip { display:flex; gap:.75rem; overflow-x:auto; padding:.35rem .2rem .7rem; scrollbar-width:thin; }
+/* overflow-x:auto forces the cross-axis to clip too, so a hover-scaled poster (and its
+   outline/shadow) got cut off by the strip's invisible edge — pad enough on all sides that
+   the enlarged tile stays inside the scroll padding box and isn't clipped (AJ Sep 27). */
+.strip { display:flex; gap:.75rem; overflow-x:auto; padding:.7rem .6rem 1rem; scrollbar-width:thin; }
 
 /* ---- poster cards: EXACT Firestick tile — white progress bar on a dark track flush at
        the poster's bottom edge, single-line centered title below ---- */
@@ -129,6 +132,9 @@ select:focus, select:hover { border-color:var(--accent); }
                       width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:.8rem; color:#7CFC9A; }
 .ep .ep-thumb .ebar { position:absolute; left:0; right:0; bottom:0; height:4px; background:#0009; border-radius:0 0 8px 8px; overflow:hidden; }
 .ep .ep-thumb .ebar > div { height:100%; background:var(--accent); }
+/* the title column must absorb the slack (flex:1 + min-width:0) so the ⬇ / 👁 buttons
+   always sit flush at the right edge instead of drifting with the episode-title length (AJ Sep 27) */
+.ep .et { flex:1 1 auto; min-width:0; }
 .ep .et b { display:block; margin-bottom:.15rem; }
 .ep .et span { color:var(--muted); font-size:.85rem; }
 .ep .et .ep-desc { color:#b9b4d4; font-size:.83rem; margin-top:.25rem; max-height:2.6em; overflow:hidden; }
