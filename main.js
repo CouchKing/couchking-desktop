@@ -146,6 +146,10 @@ ipcMain.handle('play', async (_e, { url, title, startSec = 0, subScale = 1.0, su
         '--input-ipc-server=' + mpvIpcPath,
         '--user-agent=CouchKingDesktop/0.1',
         '--hwdec=auto-safe', '--cache=yes', '--demuxer-max-bytes=256MiB',
+        // A/V SYNC (AJ Sep 28: "audio delayed after pause/resume/skip"): force EXACT seeks so a
+        // skip lands audio+video on the same frame instead of a keyframe (which drifts them apart),
+        // let mpv drop frames to catch back up after a seek, and re-lock playback to the audio clock.
+        '--hr-seek=yes', '--hr-seek-framedrop=yes', '--video-sync=audio', '--audio-pitch-correction=yes',
         '--slang=' + subLang + ',en,eng', '--alang=' + audioLang + ',en,eng',
         '--sub-scale=' + (subScale || 1.0),
         '--sub-pos=' + (subPos === 2 ? 75 : subPos === 1 ? 90 : 100),
