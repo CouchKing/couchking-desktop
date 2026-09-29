@@ -1693,11 +1693,14 @@ ckOnPos(({ pos, dur }) => {
 });
 // position where the episode is "basically over" (credits rolling) — same rule as the
 // TV player: credits lead (subs-last-cue → learned clicks → 90s), FLOORED at 80%
-function finishPointSec(durSec, creditsMs, lastCueSec) {
+function finishPointSec(durSec, creditsMs, lastCueSec, isShow) {
     const subsLead = lastCueSec > 0 ? durSec - lastCueSec - 2 : -1;
     const lead = (subsLead >= 15 && subsLead <= 300) ? subsLead
         : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 90);
-    return Math.max(durSec - lead, durSec * 0.8);
+    // CAP (AJ Sep 28, parity w/ TV 2.0.123): finished by 90% (movies) / 92% (shows) so a
+    // long-credits movie marks watched + leaves Continue Watching without sitting through credits.
+    const cap = durSec * (isShow ? 0.92 : 0.90);
+    return Math.min(Math.max(durSec - lead, durSec * 0.8), cap);
 }
 ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     $('playing').classList.add('hidden');
@@ -1713,7 +1716,7 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     // the exact same watched rule as the Firestick: only past the finish point (credits
     // lead, ≥80% floor) AND a real sitting (2+ min or true end) — a bogus near-end
     // landing + immediate back must NOT count as watched
-    const finish = finishPointSec(dur, p.credits, lastCue);
+    const finish = finishPointSec(dur, p.credits, lastCue, !!p.s);
     // false-watched fix (mirror of Firestick): a short/broken/wrong stream can fire
     // 'ended' with pos≈dur of the SHORT file, which used to satisfy `posMs >= durMs-5000`
     // and mark the real episode watched at ~4%. Started-near-the-top + <2min played must
@@ -1733,6 +1736,20 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
             if (p.s) {   // episode → checkmark (blur-clear + eye sync to every device)
                 st.watchedIds = st.watchedIds || [];
                 if (!st.watchedIds.includes(p.sid)) { st.watchedIds.push(p.sid); st.addedTs = stamp(st.addedTs, p.sid); st.addedTs = stamp(st.addedTs, 'wt:' + p.sid); }
+                // parity w/ TV 2.0.123 (AJ Sep 28): advance Continue Watching to the next unwatched
+                // AIRED episode with a fresh (blank) bar; if there's none you're CAUGHT UP, so the
+                // SHOW earns the Library "Watched" shelf (only when caught up, not after one episode).
+                if (cur?.meta?.id === p.imdb && Array.isArray(cur.meta.videos)) {
+                    const eps = cur.meta.videos.filter(v => v.season > 0)
+                        .sort((a, b) => a.season - b.season || a.episode - b.episode);
+                    const idx = eps.findIndex(x => `${p.imdb}:${x.season}:${x.episode}` === p.sid);
+                    const nx = idx >= 0 ? eps.slice(idx + 1).find(x =>
+                        (!x.released || new Date(x.released) <= new Date()) &&
+                        !st.watchedIds.includes(`${p.imdb}:${x.season}:${x.episode}`)) : null;
+                    if (nx) st.cwlast[p.imdb] = `${p.imdb}:${nx.season}:${nx.episode}`;   // blank bar → resumes next
+                    else st.watchedTitles = [{ id: p.imdb, type: 'series', name: cur.meta.name || p.label, poster: cur.meta.poster || '' },
+                        ...(st.watchedTitles || []).filter(x => x.id !== p.imdb)].slice(0, 60);
+                }
             } else {     // a FINISHED movie leaves Continue Watching (real finish only)
                 st.watchedIds = st.watchedIds || [];
                 if (!st.watchedIds.includes(p.imdb)) { st.watchedIds.push(p.imdb); st.addedTs = stamp(st.addedTs, p.imdb); st.addedTs = stamp(st.addedTs, 'wt:' + p.imdb); }
