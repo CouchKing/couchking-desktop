@@ -1743,12 +1743,13 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
                     const eps = cur.meta.videos.filter(v => v.season > 0)
                         .sort((a, b) => a.season - b.season || a.episode - b.episode);
                     const idx = eps.findIndex(x => `${p.imdb}:${x.season}:${x.episode}` === p.sid);
-                    const nx = idx >= 0 ? eps.slice(idx + 1).find(x =>
-                        (!x.released || new Date(x.released) <= new Date()) &&
-                        !st.watchedIds.includes(`${p.imdb}:${x.season}:${x.episode}`)) : null;
-                    if (nx) st.cwlast[p.imdb] = `${p.imdb}:${nx.season}:${nx.episode}`;   // blank bar → resumes next
-                    else st.watchedTitles = [{ id: p.imdb, type: 'series', name: cur.meta.name || p.label, poster: cur.meta.poster || '' },
-                        ...(st.watchedTitles || []).filter(x => x.id !== p.imdb)].slice(0, 60);
+                    const after = idx >= 0 ? eps.slice(idx + 1) : [];
+                    const nextAired = after.find(x => (!x.released || new Date(x.released) <= new Date()) &&
+                        !st.watchedIds.includes(`${p.imdb}:${x.season}:${x.episode}`));
+                    if (nextAired) st.cwlast[p.imdb] = `${p.imdb}:${nextAired.season}:${nextAired.episode}`;   // resume next aired, blank bar
+                    else if (after.length === 0) st.watchedTitles = [{ id: p.imdb, type: 'series', name: cur.meta.name || p.label, poster: cur.meta.poster || '' },
+                        ...(st.watchedTitles || []).filter(x => x.id !== p.imdb)].slice(0, 60);   // finished the LAST episode → whole series watched
+                    else st.cwlast[p.imdb] = `${p.imdb}:${after[0].season}:${after[0].episode}`;   // caught up but an upcoming episode is pending → point at it, don't mark watched
                 }
             } else {     // a FINISHED movie leaves Continue Watching (real finish only)
                 st.watchedIds = st.watchedIds || [];
