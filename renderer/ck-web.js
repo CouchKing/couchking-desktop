@@ -433,6 +433,16 @@
                 player.querySelector('.wpn-play').onclick = fireNext;
                 player.querySelector('.wpn-dismiss').onclick = () => nextCard.classList.add('hidden');
             }
+            // PiP + OS media controls (AJ Sep 28): 10s-back / 10s-forward / Next-episode buttons in
+            // the Picture-in-Picture window + OS media UI via the Media Session API.
+            if ('mediaSession' in navigator) {
+                try {
+                    navigator.mediaSession.metadata = new MediaMetadata({ title: title || 'CouchKing' });
+                    navigator.mediaSession.setActionHandler('seekbackward', () => seekTo(cur() - state.step));
+                    navigator.mediaSession.setActionHandler('seekforward', () => seekTo(cur() + state.step));
+                    navigator.mediaSession.setActionHandler('nexttrack', hasNext ? fireNext : null);
+                } catch (e) {}
+            }
             state.tick = setInterval(() => {
                 if (!state) return;
                 player.querySelector('.wp-clock').textContent = clock(new Date());
