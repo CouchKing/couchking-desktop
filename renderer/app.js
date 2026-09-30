@@ -1659,6 +1659,9 @@ document.addEventListener('ck-engine', (e) => {
         $('playing').classList.remove('hidden');
     }
 });
+// in-player subtitle pick = profile choice (AJ Sep 30: "turned off in player should sync
+// across everything") — persist to the synced sublang pref exactly like the Settings row
+document.addEventListener('ck-sublang', (e) => { try { SETPREF('sublang', e.detail); } catch {} });
 ck.onMpvDead?.((d) => {
     // phone-home the real failure so it can be fixed without the user doing anything
     try {

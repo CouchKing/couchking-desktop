@@ -268,8 +268,11 @@
                     b.onclick = () => { fn(); renderSubPanel(); };   // re-render moves the ✓, panel stays open
                     subPanel.appendChild(b);
                 };
-                row('Subtitles off', () => selectSub(null), !curSub);
-                for (const s of subList) row(s.lang || '?', () => selectSub(s), curSub === s);
+                // a USER pick here is a profile choice — persist it like the Firestick's
+                // in-player toggle does (app.js listens and writes the synced sublang pref)
+                const saySub = (v) => { try { document.dispatchEvent(new CustomEvent('ck-sublang', { detail: v })); } catch {} };
+                row('Subtitles off', () => { selectSub(null); saySub('off'); }, !curSub);
+                for (const s of subList) row(s.lang || '?', () => { selectSub(s); saySub('en'); }, curSub === s);
             };
             // CouchKing panel: section title on top, current choice purple with a ✓
             const openMenu = (title, items) => {
