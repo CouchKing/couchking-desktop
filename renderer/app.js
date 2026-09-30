@@ -1591,7 +1591,7 @@ function playDownload(m) {
     ckPlay({ localFile: fileUrl, url: m.file, title: label, startSec, sid: m.sid,
         inlineSubs: m.subs || [], probeDur: m.durSec || 0,
         introFromMs: m.introFromMs ?? -1, introToMs: m.introToMs ?? -1, creditsMs: m.creditsMs || 0,
-        subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), subBg: PREF('subbg', false),
+        subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'off'), subBg: PREF('subbg', false),
         subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0), seekStep: PREF('seek', 10),
         hasNext: false, autonext: false });
 }
@@ -1644,7 +1644,7 @@ async function play(url, label, sid, subs = null) {
     // window is "awful") — mpv only takes over for codecs Chromium can't decode, silently;
     // the banner below only appears in that mpv case (ck-engine event)
     await ckPlay({ url, title: label, startSec, sid, subs: subs || [],
-        subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'en'), audioLang: PREF('audlang', 'en'),
+        subScale: PREF('subscale', 1.0), subLang: PREF('sublang', 'off'), audioLang: PREF('audlang', 'en'),
         subBg: PREF('subbg', false), subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0),
         seekStep: PREF('seek', 10),
         introFromMs, introToMs, creditsMs, afterCredits: acList,
@@ -2335,8 +2335,8 @@ function playerSettings() {
         }));
         // AJ Sep 11: English or Off, nothing else — bg/outline/position/audio ride good
         // defaults (outline on, no box, normal pos, English audio server-gated).
-        body.appendChild(settingRow('Subtitles', PREF('sublang', 'en') === 'off' ? 'Off' : 'English', () => {
-            SETPREF('sublang', PREF('sublang', 'en') === 'en' ? 'off' : 'en'); rebuild();
+        body.appendChild(settingRow('Subtitles', PREF('sublang', 'off') === 'off' ? 'Off' : 'English', () => {
+            SETPREF('sublang', PREF('sublang', 'off') === 'en' ? 'off' : 'en'); rebuild();
         }));
         body.appendChild(sectionText('PLAYBACK'));
         body.appendChild(settingRow('Autoplay next episode', PREF('autonext', true) ? 'On' : 'Off', () => {
