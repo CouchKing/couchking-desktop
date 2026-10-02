@@ -459,7 +459,9 @@
                     const lead = (subsLead >= 15 && subsLead <= 300) ? subsLead
                         : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 90);
                     const remReal = state.dur - cur();
-                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= lead) {
+                    // card pops only when the episode is JUST about over (AJ Oct 1: credits-start
+                    // trigger put it up minutes early) — final 30s, or credits point if later
+                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= Math.min(lead, 30)) {
                         state.nextShown = true;
                         nextCard.classList.remove('hidden');
                     }
