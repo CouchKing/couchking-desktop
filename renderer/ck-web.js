@@ -522,6 +522,11 @@
                 paint(); paintCue(); posCb && posCb({ pos: cur(), dur: state?.dur || 0 });
             });
             v.addEventListener('ended', () => {
+                // the remux stream has no known duration, so ANY server-side close reads as
+                // 'ended' — a killed/crashed transcode mid-episode auto-advanced and even
+                // chain-skipped episodes (AJ Oct 4 "skips 2 episodes"). Only the real tail
+                // counts as finished; anywhere else = a dead stream → reopen where we were.
+                if (!localFile && state && state.dur > 0 && cur() < state.dur - 45) { seekTo(cur()); return; }
                 // finished for real: autoplay-next rides the exit (app decides via watched
                 // rules); flag it so a finished episode advances even at odd durations
                 // autoplay OFF: surface the card on the end frame (TV-player parity — closing
