@@ -459,11 +459,10 @@
                     const lead = (subsLead >= 15 && subsLead <= 300) ? subsLead
                         : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 90);
                     const remReal = state.dur - cur();
-                    // card pops only when the episode is JUST about over (AJ Oct 1: credits-start
-                    // trigger put it up minutes early) — a FLAT final 30s (AJ Oct 3: min(lead,30)
-                    // shrank the window when the learned credits lead was short and the card
-                    // never appeared before viewers quit the credits)
-                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= 30) {
+                    // card pops ~30s BEFORE the CONTENT ends (AJ Oct 3 "pop up on the show"):
+                    // credits lead from the real signals + 30s of show still playing, capped
+                    // at 3min so a bad credits estimate can't park it up minutes early (Oct 1)
+                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= Math.min(lead + 30, 180)) {
                         state.nextShown = true;
                         nextCard.classList.remove('hidden');
                     }
