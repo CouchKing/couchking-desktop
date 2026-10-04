@@ -418,7 +418,6 @@
                 clearTimeout(holdT);
                 holdT = setTimeout(holdHide, 20000);   // never stick past a genuinely dead reload
             } catch (e) {} };
-            v.addEventListener('error', holdHide);
             const seekTo = (t) => {
                 if (!state) return;
                 t = Math.max(0, state.dur ? Math.min(t, state.dur - 5) : t);
@@ -519,7 +518,7 @@
             });
             v.addEventListener('timeupdate', () => {
                 if (state && !state.started && v.currentTime > 0.3) { state.started = true; clearTimeout(state.fbTimer); }
-                if (state && state.endedRetries && v.currentTime > 10) state.endedRetries = 0;
+                if (state && v.currentTime > 10) { state.endedRetries = 0; state.errRetries = 0; }
                 paint(); paintCue(); posCb && posCb({ pos: cur(), dur: state?.dur || 0 });
             });
             v.addEventListener('ended', () => {
@@ -546,6 +545,14 @@
                 // desktop: never show the viewer an error for a format problem — mpv takes
                 // over silently with the exact same stream + resume point
                 if (hooks?.fallback && state && !state.started) { closePlayer(false); hooks.fallback(); return; }
+                // transient open failure (TorBox 429 window, transcode hiccup): quietly
+                // reopen where we were — the held frame + spinner stay up; the trouble
+                // hint only earns its spot after three strikes (AJ Oct 4 "i dont wanna
+                // see that")
+                if (!localFile && state && (state.errRetries = (state.errRetries || 0) + 1) <= 3) {
+                    setTimeout(() => { if (state) seekTo(cur()); }, 2500 * state.errRetries);
+                    return;
+                }
                 player?.querySelector('.wp-hint')?.classList.remove('hidden');
             });
             v.addEventListener('play', () => { player.querySelector('.wp-pp').textContent = '⏸'; });
