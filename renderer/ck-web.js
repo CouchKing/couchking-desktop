@@ -519,14 +519,21 @@
             });
             v.addEventListener('timeupdate', () => {
                 if (state && !state.started && v.currentTime > 0.3) { state.started = true; clearTimeout(state.fbTimer); }
+                if (state && state.endedRetries && v.currentTime > 10) state.endedRetries = 0;
                 paint(); paintCue(); posCb && posCb({ pos: cur(), dur: state?.dur || 0 });
             });
             v.addEventListener('ended', () => {
                 // the remux stream has no known duration, so ANY server-side close reads as
                 // 'ended' — a killed/crashed transcode mid-episode auto-advanced and even
-                // chain-skipped episodes (AJ Oct 4 "skips 2 episodes"). Only the real tail
-                // counts as finished; anywhere else = a dead stream → reopen where we were.
-                if (!localFile && state && state.dur > 0 && cur() < state.dur - 45) { seekTo(cur()); return; }
+                // chain-skipped episodes (AJ Oct 4 "skips 2 episodes"). Advance ONLY on a
+                // POSITIVE tail reading: duration known AND position at it. Unknown duration
+                // (probe still in flight while someone seek-spams right after open) must
+                // reopen too, else early skips still episode-hopped. Bounded so a truly
+                // finished stream with no duration can't reopen-loop forever.
+                if (!localFile && state && !(state.dur > 0 && cur() >= state.dur - 45)) {
+                    state.endedRetries = (state.endedRetries || 0) + 1;
+                    if (state.endedRetries <= 4) { seekTo(cur()); return; }
+                }
                 // finished for real: autoplay-next rides the exit (app decides via watched
                 // rules); flag it so a finished episode advances even at odd durations
                 // autoplay OFF: surface the card on the end frame (TV-player parity — closing
