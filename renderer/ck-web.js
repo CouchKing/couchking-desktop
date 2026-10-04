@@ -97,6 +97,7 @@
             player.id = 'web-player';
             player.innerHTML = `
                 <video autoplay playsinline></video>
+                <canvas class="wp-hold hidden"></canvas>
                 <div class="wp-cue"></div>
                 <div class="wp-ui">
                   <div class="wp-top">
@@ -402,10 +403,32 @@
                 player.querySelector('.wp-fill').style.width = pct + '%';
                 player.querySelector('.wp-dot').style.left = pct + '%';
             };
+            // HOLD LAST FRAME over the seek reload (AJ Oct 4 "black screen looks dead"): snapshot
+            // the on-screen frame into a canvas overlay BEFORE swapping src, drop it the moment
+            // the new stream paints its first frame (rVFC where available). A cross-origin frame
+            // only taints the canvas for readback — drawing + displaying is always allowed.
+            const holdC = player.querySelector('.wp-hold');
+            let holdT = null;
+            const holdHide = () => { clearTimeout(holdT); holdC.classList.add('hidden'); };
+            const holdShow = () => { try {
+                if (!v.videoWidth || v.readyState < 2) return;
+                holdC.width = v.videoWidth; holdC.height = v.videoHeight;
+                holdC.getContext('2d').drawImage(v, 0, 0);
+                holdC.classList.remove('hidden');
+                clearTimeout(holdT);
+                holdT = setTimeout(holdHide, 20000);   // never stick past a genuinely dead reload
+            } catch (e) {} };
+            v.addEventListener('error', holdHide);
             const seekTo = (t) => {
                 if (!state) return;
                 t = Math.max(0, state.dur ? Math.min(t, state.dur - 5) : t);
+                holdShow();
                 state.offset = t; v.src = src(t); syncStart(t);
+                if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => holdHide());
+                else {
+                    const h = () => { if (v.currentTime > 0.1) { holdHide(); v.removeEventListener('timeupdate', h); } };
+                    v.addEventListener('timeupdate', h);
+                }
                 // an embedded track only streamed from the old position — refetch from here
                 if (curSub && curSub.embed != null) {
                     if (subAbort) subAbort.abort();

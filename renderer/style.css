@@ -211,6 +211,9 @@ select:focus, select:hover { border-color:var(--accent); }
 /* ---- web player overlay: custom controls styled like the TV player ---- */
 #web-player { position:fixed; inset:0; background:#000; z-index:100; }
 #web-player video { position:absolute; inset:0; width:100%; height:100%; background:#000; }
+/* frozen last frame shown over the black while a seek reloads the stream */
+#web-player .wp-hold { position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+                       background:#000; z-index:1; pointer-events:none; }
 #web-player .wp-ui { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:space-between;
                      transition:opacity .25s ease; pointer-events:none; }
 #web-player .wp-ui.idle { opacity:0; }
