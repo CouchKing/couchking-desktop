@@ -460,8 +460,10 @@
                         : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 90);
                     const remReal = state.dur - cur();
                     // card pops only when the episode is JUST about over (AJ Oct 1: credits-start
-                    // trigger put it up minutes early) — final 30s, or credits point if later
-                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= Math.min(lead, 30)) {
+                    // trigger put it up minutes early) — a FLAT final 30s (AJ Oct 3: min(lead,30)
+                    // shrank the window when the learned credits lead was short and the card
+                    // never appeared before viewers quit the credits)
+                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= 30) {
                         state.nextShown = true;
                         nextCard.classList.remove('hidden');
                     }
@@ -501,7 +503,11 @@
             v.addEventListener('ended', () => {
                 // finished for real: autoplay-next rides the exit (app decides via watched
                 // rules); flag it so a finished episode advances even at odd durations
-                if (hasNext && autonext) fireNext(); else closePlayer(true);
+                // autoplay OFF: surface the card on the end frame (TV-player parity — closing
+                // straight out meant a natural end NEVER showed Play Now, AJ Oct 3)
+                if (hasNext && autonext) fireNext();
+                else if (hasNext && state && !state.nextShown) { state.nextShown = true; nextCard.classList.remove('hidden'); }
+                else closePlayer(true);
             });
             v.addEventListener('error', () => {
                 // desktop: never show the viewer an error for a format problem — mpv takes
