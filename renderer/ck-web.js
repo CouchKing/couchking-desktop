@@ -424,11 +424,10 @@
                 t = Math.max(0, state.dur ? Math.min(t, state.dur - 5) : t);
                 holdShow();
                 state.offset = t; v.src = src(t); syncStart(t);
-                if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => holdHide());
-                else {
-                    const h = () => { if (v.currentTime > 0.1) { holdHide(); v.removeEventListener('timeupdate', h); } };
-                    v.addEventListener('timeupdate', h);
-                }
+                // hide on the NEW source's first decodable frame. NOT rVFC-at-swap: a last
+                // composited frame of the OLD stream satisfies that instantly and the hold
+                // vanished before the reload even started (AJ Oct 4 "web doesn't do it")
+                v.addEventListener('loadeddata', holdHide, { once: true });
                 // an embedded track only streamed from the old position — refetch from here
                 if (curSub && curSub.embed != null) {
                     if (subAbort) subAbort.abort();
