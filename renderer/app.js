@@ -1403,7 +1403,7 @@ function playEpisodeStream(s, meta, ep, sid, label) {
         st.cwlast = { ...(st.cwlast || {}), [meta.id]: sid };
         pushAccount();
     }
-    play(s.url, label, sid, s.subtitles || null);
+    play(s.url, label, sid, s.subtitles || null, { ph: /^⏳/.test(s.name || '') });
 }
 
 // ---------- streams + play ----------
@@ -1453,7 +1453,7 @@ async function pickStream(sid, label, autoFirst = false) {
             pushContinueLocal({ id: sid.split(':')[0], type, name: cur.meta.name, poster: cur.meta.poster || '' });
             pushAccount();
         }
-        play(st.url, label, sid, st.subtitles || null);
+        play(st.url, label, sid, st.subtitles || null, { ph: /^⏳/.test(st.name || '') });
     };
     const _auto0 = streams.find(s => !s.ckNotice);
     if (autoFirst && _auto0) { start(_auto0); return; }
@@ -1620,12 +1620,36 @@ window.ckOnPos = window.ckOnPos || ((cb) => ck.onMpvPos(cb));
 window.ckOnExit = window.ckOnExit || ((cb) => ck.onMpvExit(cb));
 window.ckStop = window.ckStop || (() => ck.stopPlay());
 let playing = null;
-async function play(url, label, sid, subs = null) {
+// ---- "getting this episode ready" waiting flow (parity w/ iPhone/TV, AJ Oct 5):
+// the ⏳ stream plays the branded 5-min loop; NOTHING it does counts as progress, the
+// clip re-loops if it ends, and a 20s poll hot-swaps the REAL episode in from 0:00.
+let phPollTok = 0;
+async function startPhPoll(sid, label) {
+    const tok = ++phPollTok;
+    const base = S.addons[0]?.url?.replace(/\/$/, '');
+    if (!base) return;
+    const type = sid.includes(':') ? 'series' : 'movie';
+    while (tok === phPollTok) {
+        await new Promise(r => setTimeout(r, 20000));
+        if (tok !== phPollTok) return;
+        const d = await j(`${withUser(base)}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 }).catch(() => null);
+        const real = (d?.streams || []).find(x => !x.ckNotice && x.url && !/^⏳/.test(x.name || ''));
+        if (real && tok === phPollTok) {
+            phPollTok++;
+            try { ckStop(); } catch {}
+            play(real.url, label, sid, real.subtitles || null, { fromZero: true });
+            return;
+        }
+    }
+}
+async function play(url, label, sid, subs = null, opts = {}) {
+    phPollTok++;   // starting anything cancels a pending waiting-screen poll
     const imdb = sid.split(':')[0];
     const [, s, e] = sid.split(':');
     // cross-device resume + learned intro window + learned credits point, one call
     let startSec = 0, introFromMs = -1, introToMs = -1, creditsMs = 0, acList = [];
     try {
+        if (opts.ph || opts.fromZero) throw 0;   // waiting clip / fresh swap: always from 0:00
         const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`);
         if (r) {
             if (String(r.s || '') === String(s || '') && String(r.e || '') === String(e || '') && r.pos > 60000 && r.pct < 92)
@@ -1637,9 +1661,11 @@ async function play(url, label, sid, subs = null) {
     } catch {}
     // whichever device is further in wins — but a local synced position can be fresher
     const [lp, ld] = String((pstate().positions || {})[sid] || '').split('|').map(Number);
-    if (lp > 60000 && ld > 0 && lp / ld < 0.92 && lp / 1000 > startSec) startSec = Math.floor(lp / 1000);
+    if (!opts.ph && !opts.fromZero && lp > 60000 && ld > 0 && lp / ld < 0.92 && lp / 1000 > startSec) startSec = Math.floor(lp / 1000);
     const next = nextEpisodeOf(sid);
-    playing = { sid, imdb, s, e, label, pos: 0, dur: 0, startMs: startSec * 1000, credits: creditsMs, next };
+    playing = { sid, imdb, s, e, label, pos: 0, dur: 0, startMs: startSec * 1000, credits: creditsMs, next,
+                url, placeholder: !!opts.ph };
+    if (opts.ph) startPhPoll(sid, label);
     // 0.9.13: desktop plays IN-WINDOW through the same player as the web (AJ: raw mpv
     // window is "awful") — mpv only takes over for codecs Chromium can't decode, silently;
     // the banner below only appears in that mpv case (ck-engine event)
@@ -1685,7 +1711,7 @@ ckOnPos(({ pos, dur }) => {
     // instant start-stamp (AJ Sep 13, full-sync): the moment playback begins, position +
     // resume pointer push to the account — every other device knows within seconds,
     // half a second of watching counts (same rule as TV v2.0)
-    if (dur > 0 && !playing.startStamped && !S.guest) {
+    if (dur > 0 && !playing.startStamped && !S.guest && !playing.placeholder) {
         playing.startStamped = true;
         const st = pstate();
         st.positions = st.positions || {};
@@ -1708,6 +1734,14 @@ function finishPointSec(durSec, creditsMs, lastCueSec, isShow) {
 ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     $('playing').classList.add('hidden');
     const p = playing; playing = null;
+    if (p?.placeholder) {
+        // the waiting clip counts for NOTHING — no progress beacon, no watched, no autonext
+        // (sitting out the 5-min loop was marking the EPISODE watched + advancing CW).
+        // Natural clip end = still waiting → loop it; a deliberate back-out ends the wait.
+        if (dur > 0 && pos >= dur - 2) play(p.url, p.label, p.sid, null, { ph: true });
+        else phPollTok++;
+        return;
+    }
     if (!p || !dur || pos < 0.5) { if (p && next) advanceNext(p); return; }   // 0.5s floor (AJ Sep 13, was 5s)
     const posMs = Math.floor(pos * 1000), durMs = Math.floor(dur * 1000);
     // one beacon per sit-down — powers For You + cross-device resume (same as TV app);
