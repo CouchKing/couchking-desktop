@@ -730,7 +730,7 @@ async function rowItems(r) {
     // theme category spanning both types (Superheroes/Zombies/…): movies + shows interleaved
     if (r.tvTmdb && r.tmdb) {
         // pages=2 mirrors the web build + the TV app's tmdbBoth() (same input → same profileMix order)
-        const [mv, tv] = await Promise.all([tmdbRow('movie', r.tmdb, 2), tmdbRow('tv', r.tvTmdb, 2)]);
+        const [mv, tv] = await Promise.all([tmdbRow('movie', r.tmdb, 3), tmdbRow('tv', r.tvTmdb, 3)]);
         const out = []; const n = Math.max(mv.length, tv.length);
         for (let i = 0; i < n; i++) { if (mv[i]) out.push(mv[i]); if (tv[i]) out.push(tv[i]); }
         // dedupe by type+TMDB id — these items carry .tmdb, NOT .id, so keying on x.id
@@ -739,8 +739,9 @@ async function rowItems(r) {
         const seen = new Set();
         return profileMix(out.filter(x => { const k = x.id || x.type + ':' + x.tmdb; return x && !seen.has(k) && seen.add(k); }));
     }
-    if (r.tmdb) return profileMix(await tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb));
-    return profileMix(await cineRow(r.type, r.cine, r.genre, 2));
+    // pages 3→5 (Oct 11, AJ "way longer rows") — posters are loading=lazy, DOM cost is cheap
+    if (r.tmdb) return profileMix(await tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb, 5));
+    return profileMix(await cineRow(r.type, r.cine, r.genre, 3));
 }
 // deterministic per-profile per-day shuffle — stable all day, fresh mix tomorrow,
 // different per profile (same seed rule as the TV app's profileMix)
@@ -1044,20 +1045,98 @@ async function home() {
 
 // ---------- search (movies + shows + PEOPLE, like the apps) ----------
 let searchT = null;
+// iPhone-style scope PANELS on Search (AJ Oct 11): Movies / Shows / Anime. A picked panel
+// scopes typed searches to that type (Anime = Animation∩Japanese) and fills the empty state
+// with browse shelves for it — not just a blank box.
+let searchScope = '', sBrowseToken = 0;
+function paintSearchPanels() {
+    const bar = $('search-panels'); if (!bar) return;
+    bar.innerHTML = '';
+    for (const [key, emoji, label] of [['movie', '🎬', 'Movies'], ['series', '📺', 'Shows'], ['anime', '⛩️', 'Anime']]) {
+        const b = document.createElement('button');
+        b.className = 'spanel' + (searchScope === key ? ' on' : '');
+        b.innerHTML = `<span class="spe">${emoji}</span><span>${label}</span>`;
+        b.onclick = () => {
+            searchScope = searchScope === key ? '' : key;
+            paintSearchPanels(); loadSearchBrowse();
+            $('search').dispatchEvent(new Event('input'));   // re-run any live query in the new scope
+        };
+        bar.appendChild(b);
+    }
+}
+async function loadSearchBrowse() {
+    const h = $('search-browse'); if (!h) return;
+    const token = ++sBrowseToken;
+    h.innerHTML = '';
+    if (!searchScope) return;
+    const JP = 'with_genres=16&with_origin_country=JP';
+    const defs = searchScope === 'movie' ? [
+        ['Trending Movies', 'movie', 'trending/movie/week'],
+        ['Popular Movies', 'movie', 'movie/popular'],
+        ['Top Rated Movies', 'movie', 'movie/top_rated'],
+    ] : searchScope === 'series' ? [
+        ['Trending Shows', 'tv', 'trending/tv/week'],
+        ['Popular Shows', 'tv', 'tv/popular'],
+        ['Top Rated Shows', 'tv', 'tv/top_rated'],
+    ] : [
+        ['Trending Anime', 'tv', `discover/tv?${JP}&sort_by=popularity.desc`],
+        ['Top Rated Anime', 'tv', `discover/tv?${JP}&sort_by=vote_average.desc&vote_count.gte=500`],
+        ['Anime Movies', 'movie', `discover/movie?${JP}&sort_by=popularity.desc`],
+    ];
+    for (const [label, kind, path] of defs) {
+        const items = await tmdbRow(kind, path, 3);
+        if (token !== sBrowseToken) return;
+        if (items.length) addRow(label, items, null, h);
+    }
+}
+paintSearchPanels();
+// anime-scoped search: TMDB search results carry genre_ids + original_language in the hit
+async function searchAnimeHits(q) {
+    const pick = (d, kind) => (d?.results || [])
+        .filter(r => (r.genre_ids || []).includes(16) && r.original_language === 'ja')
+        .slice(0, 25).map(r => ({ tmdb: r.id, type: kind === 'tv' ? 'series' : 'movie', name: r.title || r.name, poster: IMG(r.poster_path) }));
+    const [tv, mv] = await Promise.all([
+        j(`https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(q)}&api_key=${TMDB}&include_adult=false`),
+        j(`https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(q)}&api_key=${TMDB}&include_adult=false`)]);
+    return [pick(tv, 'tv'), pick(mv, 'movie')];
+}
 $('search').addEventListener('input', () => {
     clearTimeout(searchT);
     searchT = setTimeout(async () => {
         const q = $('search').value.trim();
         const holder = $('search-rows');
-        holder.innerHTML = '';
-        if (q.length < 2) return;
-        const [m, s, people] = await Promise.all([
-            j(`${CINE}/catalog/movie/top/search=${encodeURIComponent(q)}.json`),
-            j(`${CINE}/catalog/series/top/search=${encodeURIComponent(q)}.json`),
-            searchPeople(q),
+        const browse = $('search-browse');
+        if (q.length < 2) { holder.innerHTML = ''; if (browse) browse.style.display = ''; return; }
+        if (browse) browse.style.display = 'none';   // results own the page while a query is live
+        // Cinemeta search runs 3-7 SECONDS (measured Sep 26) — that WAS the "searching takes
+        // forever". TMDB answers the same query in ~50ms. Give Cinemeta 2s, then fall back
+        // to TMDB; whichever wins, results paint fast. Don't blank the page first — keep the
+        // old results up with a "Searching…" line so it never flashes empty mid-type.
+        if (!holder.childElementCount)
+            holder.innerHTML = '<p class="muted" style="padding-top:1rem">Searching…</p>';
+        const cine = (type) => Promise.race([
+            j(`${CINE}/catalog/${type}/top/search=${encodeURIComponent(q)}.json`),
+            new Promise(r => setTimeout(() => r(undefined), 2000)),
         ]);
-        if ($('search').value.trim() !== q) return;
-        const map = (d, ty) => (d?.metas || []).slice(0, 25).map(x => ({ id: x.id, type: ty, name: x.name, poster: x.poster }));
+        const hits = async (type, kind) => {
+            const d = await cine(type);
+            if (d?.metas?.length) return d.metas.slice(0, 25).map(x => ({ id: x.id, type, name: x.name, poster: x.poster }));
+            const t = await j(`https://api.themoviedb.org/3/search/${kind}?query=${encodeURIComponent(q)}&api_key=${TMDB}&include_adult=false`);
+            return (t?.results || []).slice(0, 25).map(r => ({ tmdb: r.id, type, name: r.title || r.name, poster: IMG(r.poster_path) }));
+        };
+        // scope-aware (AJ Oct 11 panels): a picked panel narrows the search to that type
+        let s = [], m = [], people = [];
+        if (searchScope === 'anime') {
+            [s, m] = await searchAnimeHits(q);
+        } else if (searchScope === 'movie') {
+            [m, people] = await Promise.all([hits('movie', 'movie'), searchPeople(q)]);
+        } else if (searchScope === 'series') {
+            [s, people] = await Promise.all([hits('series', 'tv'), searchPeople(q)]);
+        } else {
+            [s, m, people] = await Promise.all([hits('series', 'tv'), hits('movie', 'movie'), searchPeople(q)]);
+        }
+        if ($('search').value.trim() !== q) return;   // a later keystroke owns the box now
+        holder.innerHTML = '';
         if (people.length) {
             const l = document.createElement('div'); l.className = 'row-label'; l.textContent = 'People';
             holder.appendChild(l);
@@ -1065,8 +1144,8 @@ $('search').addEventListener('input', () => {
             for (const p of people) strip.appendChild(personCard(p));
             holder.appendChild(strip);
         }
-        addRow('Shows', map(s, 'series'), null, holder);
-        addRow('Movies', map(m, 'movie'), null, holder);
+        addRow('Shows', s, null, holder);
+        addRow('Movies', m, null, holder);
         if (!holder.childElementCount) holder.innerHTML = `<p class="muted" style="padding-top:1rem">No results for “${q}”</p>`;
     }, 400);
 });
@@ -1943,8 +2022,12 @@ async function checkUpdate() {
             cover.id = 'update-block';
             cover.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(10,8,20,.97);' +
                 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;text-align:center';
+            // plain-terms "what's new" from version.json notes (AJ Oct 11)
+            const notes = Array.isArray(r.notes) ? r.notes.map(n => `•  ${n}`).join('<br>') : (r.notes || '');
             cover.innerHTML = `<div style="font-size:1.6rem;font-weight:800">Update required</div>
-                <div style="color:#9aa">This version is out of date and can't sync correctly.<br>Update to v${r.version} to keep watching.</div>`;
+                <div style="color:#9aa">This version is out of date and can't sync correctly.<br>Update to v${r.version} to keep watching.</div>` +
+                (notes ? `<div style="font-weight:800;margin-top:6px">What's new</div>
+                 <div style="color:#9aa;text-align:left;max-width:460px">${notes}</div>` : '');
             const ub = document.createElement('button');
             ub.textContent = `⬇ Update to v${r.version}`;
             ub.style.cssText = 'background:#f5c518;color:#1a1400;border:none;border-radius:999px;' +
@@ -1969,10 +2052,19 @@ async function checkUpdate() {
 // Catalog (MOVIE_CATS · TV_CATS) / Genre — deep pools (12 TMDB pages, 5 Cinemeta),
 // per-profile daily shuffle, rows of 15 ----------
 let dType = 'movie', dCatIx = 0, dGenre = null, dYear = null, dLoadToken = 0;
-const dCats = () => dType === 'movie' ? CK_CAT.MOVIE_CATS : CK_CAT.TV_CATS;
+const dCats = () => dType === 'movie' ? CK_CAT.MOVIE_CATS : dType === 'anime' ? CK_CAT.ANIME_CATS : CK_CAT.TV_CATS;
 function discoverPickers() {
     const bar = $('discover-pickers');
     bar.innerHTML = '';
+    // iPhone-style type PANELS (AJ Oct 11): Movies / Shows / Anime as always-visible chips
+    const seg = document.createElement('div'); seg.className = 'type-panels';
+    for (const [key, label] of [['movie', 'Movies'], ['series', 'Shows'], ['anime', 'Anime']]) {
+        const b = document.createElement('button');
+        b.className = 'tpanel' + (dType === key ? ' on' : ''); b.textContent = label;
+        b.onclick = () => { if (dType !== key) { dType = key; dCatIx = 0; dGenre = null; discover(); } };
+        seg.appendChild(b);
+    }
+    bar.appendChild(seg);
     const mk = (labelText, opts, curV, on) => {
         const l = document.createElement('label'); l.textContent = labelText;
         const s = document.createElement('select');
@@ -1980,11 +2072,9 @@ function discoverPickers() {
         s.value = curV; s.onchange = () => on(s.value);
         bar.append(l, s);
     };
-    mk('Type', ['Movies', 'TV Series'], dType === 'movie' ? 'Movies' : 'TV Series',
-        v => { dType = v === 'TV Series' ? 'series' : 'movie'; dCatIx = 0; discover(); });
     mk('Catalog', dCats().map(c => c.label), dCats()[dCatIx].label,
         v => { dCatIx = Math.max(0, dCats().findIndex(c => c.label === v)); discover(); });
-    mk('Genre', ['All genres', ...CK_CAT.GENRES.filter(g => g !== 'All')], dGenre || 'All genres',
+    mk('Genre', ['All genres', ...CK_CAT.GENRES.filter(g => g !== 'All' && (dType !== 'anime' || g !== 'Animation'))], dGenre || 'All genres',
         v => { dGenre = v === 'All genres' ? null : v; discover(); });
     const years = []; for (let y = new Date().getFullYear(); y >= 1950; y--) years.push(String(y));
     mk('Year', ['All years', ...years], dYear ? String(dYear) : 'All years',
@@ -1995,15 +2085,34 @@ async function discover() {
     const token = ++dLoadToken;
     const h = $('discover-rows'); h.innerHTML = '<div class="muted" style="padding:1rem 0">Loading…</div>';
     const cat = dCats()[Math.min(dCatIx, dCats().length - 1)];
-    const kind = dType === 'series' ? 'tv' : 'movie';
+    // anime rows carry their own kind (Anime Movies is a movie row inside the anime panel)
+    const kind = dType === 'anime' ? (cat.kind || 'tv') : dType === 'series' ? 'tv' : 'movie';
+    // genre ids: anime uses the TV taxonomy (its rows are discover/tv) except its movie rows
+    const gidFor = (k) => dGenre ? ((k === 'tv' ? CK_CAT.TMDB_TV_GENRE_IDS : CK_CAT.TMDB_GENRE_IDS)[dGenre] || null) : null;
+    // a path already scoped to a genre (anime's with_genres=16) MERGES (comma = AND) —
+    // a second with_genres param would silently clobber the first
+    const withGenre = (path, k) => {
+        const gid = gidFor(k);
+        if (!gid || !path.startsWith('discover/')) return path;
+        return path.includes('with_genres=') ? path.replace(/with_genres=([^&]*)/, (_, v) => `with_genres=${v},${gid}`)
+            : path + `&with_genres=${gid}`;
+    };
     let items;
-    if (dYear && !cat.foryou) {
+    if (cat.tvTmdb && cat.tmdb && !cat.foryou) {
+        // movies-AND-shows catalog (Apocalypse etc.) — both halves, year + genre honored
+        let mp = withGenre(cat.tmdb, 'movie'), tp = withGenre(cat.tvTmdb, 'tv');
+        if (dYear) { mp += `&primary_release_year=${dYear}`; tp += `&first_air_date_year=${dYear}`; }
+        const [mv, tv] = await Promise.all([tmdbRow('movie', mp, 6, 400), tmdbRow('tv', tp, 6, 400)]);
+        const out = []; const n = Math.max(mv.length, tv.length);
+        for (let i = 0; i < n; i++) { if (mv[i]) out.push(mv[i]); if (tv[i]) out.push(tv[i]); }
+        const seen = new Set();
+        items = profileMix(out.filter(x => { const k = x.id || x.type + ':' + x.tmdb; return !seen.has(k) && seen.add(k); }));
+    } else if (dYear && !cat.foryou) {
         // YEAR forces an accurate TMDB discover (keeps the provider filter if the catalog is
         // a discover/ one, and honors genre) — parity with the TV app's year filter. (AJ Sep 15)
         const yp = kind === 'tv' ? `first_air_date_year=${dYear}` : `primary_release_year=${dYear}`;
-        let base = (cat.tmdb && cat.tmdb.startsWith('discover/')) ? cat.tmdb : `discover/${kind}?sort_by=popularity.desc&vote_count.gte=40`;
-        const gid = dGenre ? (dType === 'series' ? CK_CAT.TMDB_TV_GENRE_IDS : CK_CAT.TMDB_GENRE_IDS)[dGenre] : null;
-        if (gid) base += `&with_genres=${gid}`;
+        let base = (cat.tmdb && cat.tmdb.startsWith('discover/')) ? withGenre(cat.tmdb, kind)
+            : withGenre(`discover/${kind}?sort_by=popularity.desc&vote_count.gte=40`, kind);
         base += `&${yp}`;
         items = profileMix(await tmdbRow(kind, base, 12, 400));
     } else if (cat.foryou) {
@@ -2012,9 +2121,8 @@ async function discover() {
     } else if (cat.tmdb) {
         // deep pools + genre narrowing: discover queries filter server-side, the rest by
         // TMDB genre ids on the results
-        let path = cat.tmdb;
-        const gid = dGenre ? (dType === 'series' ? CK_CAT.TMDB_TV_GENRE_IDS : CK_CAT.TMDB_GENRE_IDS)[dGenre] : null;
-        if (gid && path.startsWith('discover/')) path += `&with_genres=${gid}`;
+        const path = withGenre(cat.tmdb, kind);
+        const gid = gidFor(kind);
         items = await tmdbRow(kind, path, 12, 400);
         if (gid && !path.includes('with_genres')) items = items.filter(t => (t.genres || []).includes(gid));
         items = profileMix(items);

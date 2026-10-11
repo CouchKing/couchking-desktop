@@ -21,6 +21,9 @@ const CK_CAT = (() => {
         { label: "Date Night", type: "movie", tmdb: "discover/movie?with_genres=10749,35&sort_by=popularity.desc&vote_count.gte=200", tvTmdb: "discover/tv?with_genres=35&sort_by=popularity.desc&vote_count.gte=100" },
         { label: "Superheroes", type: "movie", tmdb: "discover/movie?with_keywords=9715&sort_by=popularity.desc&vote_count.gte=100", tvTmdb: "discover/tv?with_keywords=9715&sort_by=popularity.desc&vote_count.gte=20" },
         { label: "Zombies", type: "movie", tmdb: "discover/movie?with_keywords=12377&sort_by=popularity.desc&vote_count.gte=50", tvTmdb: "discover/tv?with_keywords=12377&sort_by=popularity.desc&vote_count.gte=15" },
+        // AJ Oct 11: apocalypse shelf, movies AND shows mixed (4458 post-apocalyptic future,
+        // 12332 apocalypse, 359337 post-apocalyptic — ids verified live)
+        { label: "Apocalypse", type: "movie", tmdb: "discover/movie?with_keywords=4458|12332|359337&sort_by=popularity.desc&vote_count.gte=50", tvTmdb: "discover/tv?with_keywords=4458|12332|359337&sort_by=popularity.desc&vote_count.gte=15" },
         { label: "Time Travel", type: "movie", tmdb: "discover/movie?with_keywords=4379&sort_by=popularity.desc&vote_count.gte=100", tvTmdb: "discover/tv?with_keywords=4379&sort_by=popularity.desc&vote_count.gte=15" },
         { label: "Feel-Good", type: "movie", tmdb: "discover/movie?with_genres=35,10751&sort_by=popularity.desc&vote_count.gte=300", tvTmdb: "discover/tv?with_genres=35,10751&sort_by=popularity.desc&vote_count.gte=100" },
         { label: "Tearjerkers", type: "movie", tmdb: "discover/movie?with_genres=18,10749&sort_by=vote_average.desc&vote_count.gte=500", tvTmdb: "discover/tv?with_genres=18&sort_by=vote_average.desc&vote_count.gte=200" },
@@ -89,6 +92,7 @@ const CK_CAT = (() => {
         { label: "Top Rated", cine: "imdbRating" },
         { label: "New in Theaters", tmdb: nowPlaying() },
         { label: "🍅 Certified Fresh", tmdb: "discover/movie?vote_average.gte=7.4&vote_count.gte=300&sort_by=popularity.desc" },
+        { label: "Apocalypse", tmdb: "discover/movie?with_keywords=4458|12332|359337&sort_by=popularity.desc&vote_count.gte=50", tvTmdb: "discover/tv?with_keywords=4458|12332|359337&sort_by=popularity.desc&vote_count.gte=15" },
         { label: "Netflix", tmdb: prov("movie", "8") },
         { label: "Hulu", tmdb: prov("movie", "15") },
         { label: "Max", tmdb: prov("movie", "1899") },
@@ -106,6 +110,7 @@ const CK_CAT = (() => {
         { label: "Top Rated", cine: "imdbRating" },
         { label: "New Shows", tmdb: "discover/tv?sort_by=first_air_date.desc&vote_count.gte=25" },
         { label: "Anime", tmdb: "discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc" },
+        { label: "Apocalypse", tmdb: "discover/movie?with_keywords=4458|12332|359337&sort_by=popularity.desc&vote_count.gte=50", tvTmdb: "discover/tv?with_keywords=4458|12332|359337&sort_by=popularity.desc&vote_count.gte=15" },
         { label: "Netflix", tmdb: prov("tv", "8") },
         { label: "Hulu", tmdb: prov("tv", "15") },
         { label: "Max", tmdb: prov("tv", "1899") },
@@ -114,6 +119,15 @@ const CK_CAT = (() => {
         { label: "Disney+", tmdb: prov("tv", "337") },
         { label: "Paramount+", tmdb: prov("tv", "2303|2616|531") },
         { label: "Peacock", tmdb: prov("tv", "386") },
+    ];
+    // Discover's catalog list when the type panel is ANIME (AJ Oct 11, iPhone-style panels) —
+    // every entry is true anime: Animation genre AND Japanese origin
+    const ANIME_CATS = [
+        { label: "Trending Anime", tmdb: "discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc" },
+        { label: "Top Rated Anime", tmdb: "discover/tv?with_genres=16&with_origin_country=JP&sort_by=vote_average.desc&vote_count.gte=500" },
+        { label: "Anime Movies", kind: "movie", tmdb: "discover/movie?with_genres=16&with_origin_country=JP&sort_by=popularity.desc" },
+        { label: "New Anime", tmdb: "discover/tv?with_genres=16&with_origin_country=JP&sort_by=first_air_date.desc&vote_count.gte=25" },
+        { label: "Classic Anime", tmdb: "discover/tv?with_genres=16&with_origin_country=JP&first_air_date.lte=2009-12-31&sort_by=vote_count.desc" },
     ];
     // shelf-picker groupings — same buckets as the Firestick's Home-shelves page
     const SHELF_GROUPS = {
@@ -140,5 +154,5 @@ const CK_CAT = (() => {
     const AVATAR_CHOICES = ["👑","🦁","🦊","🐼","🐸","🚀","🌸","🎮","🐱","🐶","🐰","🐻",
         "🐧","🦄","⚽","🍕","🤖","👽","🦸","🍿","⭐","🌟","🎈","🎸"];
     const COLOR_CHOICES = ["#7B5BF5","#E2574C","#4CAF7D","#E2A54C","#4C9DE2","#C24CE2","#E24C9D","#3FB6B0"];
-    return { SHELF_CATALOG, DEFAULT_SHELVES, MOVIE_CATS, TV_CATS, SHELF_GROUPS, GENRES, TMDB_GENRE_IDS, TMDB_TV_GENRE_IDS, AVATAR_CHOICES, COLOR_CHOICES };
+    return { SHELF_CATALOG, DEFAULT_SHELVES, MOVIE_CATS, TV_CATS, ANIME_CATS, SHELF_GROUPS, GENRES, TMDB_GENRE_IDS, TMDB_TV_GENRE_IDS, AVATAR_CHOICES, COLOR_CHOICES };
 })();

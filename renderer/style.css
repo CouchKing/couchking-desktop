@@ -460,3 +460,18 @@ select:focus, select:hover { border-color:var(--accent); }
 /* long channel/programme names stay INSIDE their card (AJ Sep 17 "flo thing running out of the box") */
 .lvcw-card > div { min-width: 0; max-width: 230px; }
 .lvcw-n, .lvcw-p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- iPhone-style type panels (Search + Discover) — AJ Oct 11 ---- */
+.type-panels { display:flex; gap:.5rem; margin:.2rem 0 .4rem; }
+.tpanel { background:var(--card2); color:var(--fg); border:none; border-radius:10px;
+  padding:.55rem 1.2rem; font-weight:700; font-size:.95rem; cursor:pointer; }
+.tpanel.on { background:var(--accent); color:#fff; }
+#search-panels { display:flex; gap:.6rem; margin:.7rem 0 .4rem; }
+.spanel { flex:1; display:flex; flex-direction:column; align-items:center; gap:.25rem;
+  background:var(--card); color:var(--fg); border:1px solid var(--card2); border-radius:14px;
+  padding:1rem 0 .85rem; font-weight:700; font-size:.95rem; cursor:pointer; }
+.spanel .spe { font-size:1.5rem; line-height:1; }
+.spanel.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+#web-player .wp-shuttle { position:absolute; top:3.4rem; left:50%; transform:translateX(-50%);
+  background:#000A; color:#fff; font-size:1.5rem; font-weight:700; letter-spacing:.1em;
+  padding:.4rem 1.1rem; border-radius:12px; pointer-events:none; }

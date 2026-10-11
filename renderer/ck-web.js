@@ -105,6 +105,7 @@
                     <span class="wp-right"><span class="wp-clock"></span><span class="wp-ends"></span></span>
                   </div>
                   <button class="wp-skip hidden">Skip intro ⏭</button>
+                  <div class="wp-shuttle hidden"></div>
                   <div class="wp-next hidden">
                     <div class="wpn-tag">UP NEXT</div><div class="wpn-title"></div>
                     <div class="wpn-btns"><button class="wpn-play">▶ Play now</button><button class="wpn-dismiss">Dismiss</button></div>
@@ -121,6 +122,7 @@
                       <div class="wp-cell"><span>Sub Size</span><button class="wp-btn wp-subsize">Aa</button></div>
                       <div class="wp-cell"><span>Size</span><button class="wp-btn wp-scale">⤢</button></div>
                       <div class="wp-cell"><span>Speed</span><button class="wp-btn wp-speed">1×</button></div>
+                      <div class="wp-cell"><span>Restart</span><button class="wp-btn wp-restart" title="Play from beginning">⟲</button></div>
                       <div class="wp-cell"><span>Info</span><button class="wp-btn wp-info">ⓘ</button></div>
                       <div class="wp-cell"><span>Volume</span><input class="wp-vol" type="range" min="0" max="1" step=".05" value="1"></div>
                       <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">⛶</button></div>
@@ -559,9 +561,53 @@
             v.addEventListener('pause', () => { player.querySelector('.wp-pp').textContent = '▶'; });
 
             player.querySelector('.wp-back').onclick = () => closePlayer(true);
-            player.querySelector('.wp-pp').onclick = () => v.paused ? v.play() : v.pause();
-            player.querySelector('.wp-rew').onclick = () => seekTo(cur() - state.step);
-            player.querySelector('.wp-fwd').onclick = () => seekTo(cur() + state.step);
+            // ---- Netflix-style stepped FF/RW shuttle (AJ Oct 11) ----
+            // Each press steps the scan one level (▶ ▶▶ ▶▶▶); the opposite direction steps back
+            // down; play resumes right where the scan sits. The scan only moves the TIMELINE
+            // PREVIEW — a single seek fires when you resume, because every seek reopens the
+            // transcode (same reason the drag-scrubber seeks on release only).
+            const shuttle = { level: 0, pos: 0, timer: null, rates: [10, 40, 120] };
+            const shuttleBadge = player.querySelector('.wp-shuttle');
+            const shuttlePreview = () => {
+                if (!state?.dur) return;
+                const f = Math.max(0, Math.min(1, shuttle.pos / state.dur));
+                player.querySelector('.wp-fill').style.width = (f * 100) + '%';
+                player.querySelector('.wp-dot').style.left = (f * 100) + '%';
+                player.querySelector('.wp-cur').textContent = fmt(shuttle.pos);
+            };
+            const shuttleStop = (resume) => {
+                if (!shuttle.level) return;
+                clearInterval(shuttle.timer); shuttle.timer = null; shuttle.level = 0;
+                shuttleBadge.classList.add('hidden');
+                if (resume) { seekTo(shuttle.pos); v.play().catch(() => {}); }
+            };
+            const shuttleStep = (dir) => {
+                if (!state?.dur) { seekTo(cur() + dir * state.step); return; }   // unknown length: plain step
+                const lvl = Math.max(-3, Math.min(3, shuttle.level + dir));
+                if (lvl === 0) { shuttleStop(true); return; }
+                if (!shuttle.level) { shuttle.pos = cur(); v.pause(); }
+                shuttle.level = lvl;
+                const n = Math.abs(lvl);
+                shuttleBadge.textContent = `${(lvl > 0 ? '▶' : '◀').repeat(n)}  ${shuttle.rates[n - 1]}x`;
+                shuttleBadge.classList.remove('hidden');
+                wake();
+                clearInterval(shuttle.timer);
+                shuttle.timer = setInterval(() => {
+                    if (!state) { clearInterval(shuttle.timer); shuttle.level = 0; return; }   // player closed mid-scan
+                    shuttle.pos += shuttle.rates[Math.abs(shuttle.level) - 1] / 4 * Math.sign(shuttle.level);
+                    if (shuttle.pos <= 0) { shuttle.pos = 0; shuttlePreview(); shuttleStop(true); return; }
+                    if (shuttle.pos >= state.dur - 4) { shuttle.pos = state.dur - 4; shuttlePreview(); shuttleStop(true); return; }
+                    shuttlePreview(); wake();
+                }, 250);
+            };
+            player.querySelector('.wp-pp').onclick = () => {
+                if (shuttle.level) { shuttleStop(true); return; }
+                v.paused ? v.play() : v.pause();
+            };
+            player.querySelector('.wp-rew').onclick = () => shuttleStep(-1);
+            player.querySelector('.wp-fwd').onclick = () => shuttleStep(+1);
+            // Restart = play from the very beginning (AJ Oct 11), beside Info
+            player.querySelector('.wp-restart').onclick = () => { shuttleStop(false); seekTo(0); v.play().catch(() => {}); };
             player.querySelector('.wp-vol').oninput = (e) => { v.volume = +e.target.value; };
             player.querySelector('.wp-fs').onclick = () =>
                 document.fullscreenElement ? document.exitFullscreen() : player.requestFullscreen().catch(() => {});
