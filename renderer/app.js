@@ -2065,13 +2065,21 @@ async function checkUpdate() {
 // Catalog (MOVIE_CATS · TV_CATS) / Genre — deep pools (12 TMDB pages, 5 Cinemeta),
 // per-profile daily shuffle, rows of 15 ----------
 let dType = 'movie', dCatIx = 0, dGenre = null, dYear = null, dLoadToken = 0;
-const dCats = () => dType === 'movie' ? CK_CAT.MOVIE_CATS : dType === 'anime' ? CK_CAT.ANIME_CATS : CK_CAT.TV_CATS;
+const dCats = () => {
+    // AJ Oct 11: your selected home shelves (Hallmark, Zombies, …) join the Catalog dropdown
+    const base = dType === 'movie' ? CK_CAT.MOVIE_CATS : CK_CAT.TV_CATS;
+    const sel = (pstate().shelves || []);
+    const mine = sel.map(l => CK_CAT.SHELF_CATALOG.find(x => x.label === l)).filter(Boolean)
+        .filter(r => r.tvTmdb ? true : (dType === 'movie' ? r.type !== 'series' : r.type === 'series'))
+        .filter(r => !base.some(b => b.label === r.label));
+    return [...base, ...mine];
+};
 function discoverPickers() {
     const bar = $('discover-pickers');
     bar.innerHTML = '';
     // iPhone-style type PANELS (AJ Oct 11): Movies / Shows / Anime as always-visible chips
     const seg = document.createElement('div'); seg.className = 'type-panels';
-    for (const [key, label] of [['movie', 'Movies'], ['series', 'Shows'], ['anime', 'Anime']]) {
+    for (const [key, label] of [['movie', 'Movies'], ['series', 'Shows']]) {
         const b = document.createElement('button');
         b.className = 'tpanel' + (dType === key ? ' on' : ''); b.textContent = label;
         b.onclick = () => { if (dType !== key) { dType = key; dCatIx = 0; dGenre = null; discover(); } };
@@ -2087,7 +2095,7 @@ function discoverPickers() {
     };
     mk('Catalog', dCats().map(c => c.label), dCats()[dCatIx].label,
         v => { dCatIx = Math.max(0, dCats().findIndex(c => c.label === v)); discover(); });
-    mk('Genre', ['All genres', ...CK_CAT.GENRES.filter(g => g !== 'All' && (dType !== 'anime' || g !== 'Animation'))], dGenre || 'All genres',
+    mk('Genre', ['All genres', ...CK_CAT.GENRES.filter(g => g !== 'All')], dGenre || 'All genres',
         v => { dGenre = v === 'All genres' ? null : v; discover(); });
     const years = []; for (let y = new Date().getFullYear(); y >= 1950; y--) years.push(String(y));
     mk('Year', ['All years', ...years], dYear ? String(dYear) : 'All years',
@@ -2099,7 +2107,7 @@ async function discover() {
     const h = $('discover-rows'); h.innerHTML = '<div class="muted" style="padding:1rem 0">Loading…</div>';
     const cat = dCats()[Math.min(dCatIx, dCats().length - 1)];
     // anime rows carry their own kind (Anime Movies is a movie row inside the anime panel)
-    const kind = dType === 'anime' ? (cat.kind || 'tv') : dType === 'series' ? 'tv' : 'movie';
+    const kind = cat.kind || (dType === 'series' ? 'tv' : 'movie');
     // genre ids: anime uses the TV taxonomy (its rows are discover/tv) except its movie rows
     const gidFor = (k) => dGenre ? ((k === 'tv' ? CK_CAT.TMDB_TV_GENRE_IDS : CK_CAT.TMDB_GENRE_IDS)[dGenre] || null) : null;
     // a path already scoped to a genre (anime's with_genres=16) MERGES (comma = AND) —
@@ -2110,13 +2118,15 @@ async function discover() {
         if (gid && path.startsWith('discover/'))
             out = path.includes('with_genres=') ? path.replace(/with_genres=([^&]*)/, (_, v) => `with_genres=${v},${gid}`)
                 : path + `&with_genres=${gid}`;
-        // anime only shows under the ANIME panel (AJ Oct 11): Movies/Shows discover
-        // queries exclude TMDB's 'anime' keyword
-        if (dType !== 'anime' && out.startsWith('discover/')) out += '&without_keywords=210024';
+        // anime stays in its own catalogs (AJ Oct 11): generic Movies/Shows discover
+        // queries exclude TMDB's 'anime' keyword; JP-scoped anime catalogs are exempt
+        if (out.startsWith('discover/') && !out.includes('with_origin_country=JP')) out += '&without_keywords=210024';
         return out;
     };
     let items;
-    if (cat.tvTmdb && cat.tmdb && !cat.foryou) {
+    if (cat.ids) {   // curated watch orders (Marvel chrono etc.): exact order
+        items = await idsRow(cat.type, cat.ids);
+    } else if (cat.tvTmdb && cat.tmdb && !cat.foryou) {
         // movies-AND-shows catalog (Apocalypse etc.) — both halves, year + genre honored
         let mp = withGenre(cat.tmdb, 'movie'), tp = withGenre(cat.tvTmdb, 'tv');
         if (dYear) { mp += `&primary_release_year=${dYear}`; tp += `&first_air_date_year=${dYear}`; }
@@ -2145,7 +2155,7 @@ async function discover() {
         if (gid && !path.includes('with_genres')) items = items.filter(t => (t.genres || []).includes(gid));
         items = profileMix(items);
     } else {
-        items = profileMix(await cineRow(dType, cat.cine, dGenre, 5));
+        items = profileMix(await cineRow(dType, cat.cine, dGenre || cat.genre, 5));
     }
     if (token !== dLoadToken) return;
     h.innerHTML = '';
