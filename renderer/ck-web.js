@@ -604,8 +604,21 @@
                 if (shuttle.level) { shuttleStop(true); return; }
                 v.paused ? v.play() : v.pause();
             };
-            player.querySelector('.wp-rew').onclick = () => shuttleStep(-1);
-            player.querySelector('.wp-fwd').onclick = () => shuttleStep(+1);
+            // TAP = ±step every time; HOLD (500ms) = Netflix scan; taps then change speed
+            const armSeekBtn = (sel, dir) => {
+                const b = player.querySelector(sel);
+                let t = null, held = false;
+                b.onclick = null;
+                b.onpointerdown = (e) => { held = false; e.preventDefault();
+                    t = setTimeout(() => { held = true; shuttleStep(dir); }, 500); };
+                b.onpointerup = () => { clearTimeout(t);
+                    if (held) return;
+                    if (shuttle.level) shuttleStep(dir);
+                    else seekTo(cur() + dir * state.step); };
+                b.onpointerleave = () => clearTimeout(t);
+            };
+            armSeekBtn('.wp-rew', -1);
+            armSeekBtn('.wp-fwd', +1);
             // Restart = play from the very beginning (AJ Oct 11), beside Info
             player.querySelector('.wp-restart').onclick = () => { shuttleStop(false); seekTo(0); v.play().catch(() => {}); };
             player.querySelector('.wp-vol').oninput = (e) => { v.volume = +e.target.value; };

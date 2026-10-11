@@ -109,7 +109,6 @@ const CK_CAT = (() => {
         { label: "New", cine: "year" },
         { label: "Top Rated", cine: "imdbRating" },
         { label: "New Shows", tmdb: "discover/tv?sort_by=first_air_date.desc&vote_count.gte=25" },
-        { label: "Anime", tmdb: "discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc" },
         { label: "Apocalypse", tmdb: "discover/movie?with_keywords=4458|12332|359337&sort_by=popularity.desc&vote_count.gte=50", tvTmdb: "discover/tv?with_keywords=4458|12332|359337&sort_by=popularity.desc&vote_count.gte=15" },
         { label: "Netflix", tmdb: prov("tv", "8") },
         { label: "Hulu", tmdb: prov("tv", "15") },

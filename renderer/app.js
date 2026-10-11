@@ -2150,8 +2150,9 @@ async function discover() {
     if (token !== dLoadToken) return;
     h.innerHTML = '';
     if (!items.length) { h.innerHTML = '<p class="muted" style="padding-top:1rem">Nothing here.</p>'; return; }
-    // ONE really long row (AJ Oct 11 "not any more columns") — posters are loading=lazy
-    addRow(`${cat.label}${dGenre ? ' · ' + dGenre : ''}${dYear ? ' · ' + dYear : ''}`, items, null, h);
+    // rows of 30 (AJ Oct 11 "multiple rows and columns are fine, just longer"), label on the first
+    for (let i = 0; i < items.length; i += 30)
+        addRow(i === 0 ? `${cat.label}${dGenre ? ' · ' + dGenre : ''}${dYear ? ' · ' + dYear : ''}` : '', items.slice(i, i + 30), null, h);
 }
 
 // ---------- Library (Stremio-style: search + type chips + sort cycle + rows) ----------
