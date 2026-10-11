@@ -730,7 +730,7 @@ async function rowItems(r) {
     // theme category spanning both types (Superheroes/Zombies/…): movies + shows interleaved
     if (r.tvTmdb && r.tmdb) {
         // pages=2 mirrors the web build + the TV app's tmdbBoth() (same input → same profileMix order)
-        const [mv, tv] = await Promise.all([tmdbRow('movie', r.tmdb, 3), tmdbRow('tv', r.tvTmdb, 3)]);
+        const [mv, tv] = await Promise.all([tmdbRow('movie', r.tmdb, 4), tmdbRow('tv', r.tvTmdb, 4)]);
         const out = []; const n = Math.max(mv.length, tv.length);
         for (let i = 0; i < n; i++) { if (mv[i]) out.push(mv[i]); if (tv[i]) out.push(tv[i]); }
         // dedupe by type+TMDB id — these items carry .tmdb, NOT .id, so keying on x.id
@@ -740,8 +740,8 @@ async function rowItems(r) {
         return profileMix(out.filter(x => { const k = x.id || x.type + ':' + x.tmdb; return x && !seen.has(k) && seen.add(k); }));
     }
     // pages 3→5 (Oct 11, AJ "way longer rows") — posters are loading=lazy, DOM cost is cheap
-    if (r.tmdb) return profileMix(await tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb, 5));
-    return profileMix(await cineRow(r.type, r.cine, r.genre, 3));
+    if (r.tmdb) return profileMix(await tmdbRow(r.type === 'series' ? 'tv' : 'movie', r.tmdb, 8));   // 5→8 (AJ Oct 11 'longer')
+    return profileMix(await cineRow(r.type, r.cine, r.genre, 4));
 }
 // deterministic per-profile per-day shuffle — stable all day, fresh mix tomorrow,
 // different per profile (same seed rule as the TV app's profileMix)
