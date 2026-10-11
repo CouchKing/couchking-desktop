@@ -1074,20 +1074,33 @@ async function loadSearchBrowse() {
         ['Trending Movies', 'movie', 'trending/movie/week'],
         ['Popular Movies', 'movie', 'movie/popular'],
         ['Top Rated Movies', 'movie', 'movie/top_rated'],
+        ['New in Theaters', 'movie', 'movie/now_playing'],
+        ['Action', 'movie', 'discover/movie?with_genres=28&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Comedy', 'movie', 'discover/movie?with_genres=35&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Horror', 'movie', 'discover/movie?with_genres=27&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Sci-Fi', 'movie', 'discover/movie?with_genres=878&sort_by=popularity.desc&vote_count.gte=100'],
     ] : searchScope === 'series' ? [
         ['Trending Shows', 'tv', 'trending/tv/week'],
         ['Popular Shows', 'tv', 'tv/popular'],
         ['Top Rated Shows', 'tv', 'tv/top_rated'],
+        ['New Shows', 'tv', 'discover/tv?sort_by=first_air_date.desc&vote_count.gte=25'],
+        ['Drama', 'tv', 'discover/tv?with_genres=18&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Crime', 'tv', 'discover/tv?with_genres=80&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Comedy Shows', 'tv', 'discover/tv?with_genres=35&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Reality', 'tv', 'discover/tv?with_genres=10764&sort_by=popularity.desc&vote_count.gte=50'],
     ] : [
         ['Trending Anime', 'tv', `discover/tv?${JP}&sort_by=popularity.desc`],
         ['Top Rated Anime', 'tv', `discover/tv?${JP}&sort_by=vote_average.desc&vote_count.gte=500`],
         ['Anime Movies', 'movie', `discover/movie?${JP}&sort_by=popularity.desc`],
+        ['New Anime', 'tv', `discover/tv?${JP}&sort_by=first_air_date.desc&vote_count.gte=25`],
+        ['Classic Anime', 'tv', `discover/tv?${JP}&first_air_date.lte=2009-12-31&sort_by=vote_count.desc`],
+        ['Action Anime', 'tv', 'discover/tv?with_genres=16,10759&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=50'],
+        ['Romance Anime', 'tv', 'discover/tv?with_genres=16,10749&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=25'],
     ];
-    for (const [label, kind, path] of defs) {
-        const items = await tmdbRow(kind, path, 3);
-        if (token !== sBrowseToken) return;
-        if (items.length) addRow(label, items, null, h);
-    }
+    // all shelves fetch AT ONCE, render in order (AJ Oct 11 "takes too long")
+    const fetched = await Promise.all(defs.map(([label, kind, path]) => tmdbRow(kind, path, 3).then(items => [label, items])));
+    if (token !== sBrowseToken) return;
+    for (const [label, items] of fetched) if (items.length) addRow(label, items, null, h);
 }
 paintSearchPanels();
 // anime-scoped search: TMDB search results carry genre_ids + original_language in the hit
@@ -2093,9 +2106,14 @@ async function discover() {
     // a second with_genres param would silently clobber the first
     const withGenre = (path, k) => {
         const gid = gidFor(k);
-        if (!gid || !path.startsWith('discover/')) return path;
-        return path.includes('with_genres=') ? path.replace(/with_genres=([^&]*)/, (_, v) => `with_genres=${v},${gid}`)
-            : path + `&with_genres=${gid}`;
+        let out = path;
+        if (gid && path.startsWith('discover/'))
+            out = path.includes('with_genres=') ? path.replace(/with_genres=([^&]*)/, (_, v) => `with_genres=${v},${gid}`)
+                : path + `&with_genres=${gid}`;
+        // anime only shows under the ANIME panel (AJ Oct 11): Movies/Shows discover
+        // queries exclude TMDB's 'anime' keyword
+        if (dType !== 'anime' && out.startsWith('discover/')) out += '&without_keywords=210024';
+        return out;
     };
     let items;
     if (cat.tvTmdb && cat.tmdb && !cat.foryou) {
@@ -2132,9 +2150,8 @@ async function discover() {
     if (token !== dLoadToken) return;
     h.innerHTML = '';
     if (!items.length) { h.innerHTML = '<p class="muted" style="padding-top:1rem">Nothing here.</p>'; return; }
-    // rows of 15, label on the first — same as the TV app's Discover
-    for (let i = 0; i < items.length; i += 15)
-        addRow(i === 0 ? `${cat.label}${dGenre ? ' · ' + dGenre : ''}${dYear ? ' · ' + dYear : ''}` : '', items.slice(i, i + 15), null, h);
+    // ONE really long row (AJ Oct 11 "not any more columns") — posters are loading=lazy
+    addRow(`${cat.label}${dGenre ? ' · ' + dGenre : ''}${dYear ? ' · ' + dYear : ''}`, items, null, h);
 }
 
 // ---------- Library (Stremio-style: search + type chips + sort cycle + rows) ----------
