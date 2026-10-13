@@ -381,7 +381,10 @@
                         const isEng = x => /^en/i.test(x.lang || '') || /english/i.test(x.title || '');
                         const isSdh = x => !!x.hi || /sdh|hearing|\bcc\b/i.test(x.title || '');
                         const isForced = x => !!x.forced || /forced/i.test(x.title || '');
-                        const emb = d.subs.filter(x => isEng(x) && !isForced(x))
+                        // fully-untagged in-mux text track (TrollHD-style WEB-DLs) = the release's
+                        // own English subs cut for THIS file — count it (AJ Oct 12, Gilmore S1E7)
+                        const isUntagged = x => !(x.lang && x.lang !== 'und') && !x.title;
+                        const emb = d.subs.filter(x => (isEng(x) || isUntagged(x)) && !isForced(x))
                             .sort((a, b) => isSdh(a) - isSdh(b))
                             .map(x => ({ embed: x.i, lang: 'English — in video' + (isSdh(x) ? ' (SDH)' : '') }));
                         const seen = {};
