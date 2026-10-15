@@ -233,11 +233,16 @@ select:focus, select:hover { border-color:var(--accent); }
 #web-player .wp-cue { position:absolute; left:50%; transform:translateX(-50%); bottom:9vh; max-width:68%;
                       color:#fff; font-weight:600; text-align:center; line-height:1.35; white-space:pre-line;
                       padding:.15em .45em; border-radius:6px; z-index:5; pointer-events:none; display:none; }
-/* Skip intro — pill inside the learned window, bottom-left like the TV player */
-#web-player .wp-skip { position:absolute; left:2rem; bottom:170px; background:#241F3DE6; color:#fff;
+/* Skip intro — pill inside the learned window, bottom-left like the TV player;
+   Dismiss beside it hides the pill for the window (AJ Oct 15) */
+#web-player .wp-skiprow { position:absolute; left:2rem; bottom:170px; display:flex; gap:.5rem; align-items:center; }
+#web-player .wp-skip { background:#241F3DE6; color:#fff;
                        border:1px solid #FFFFFF3A; font-weight:800; padding:.7rem 1.3rem; border-radius:99px;
                        font-size:1rem; box-shadow:0 3px 14px #000A; }
 #web-player .wp-skip:hover { background:var(--accent); }
+#web-player .wp-skipx { background:#241F3DB0; color:#CFC9EE; border:1px solid #FFFFFF22; font-weight:700;
+                        padding:.7rem 1.1rem; border-radius:99px; font-size:.95rem; box-shadow:0 3px 14px #000A; }
+#web-player .wp-skipx:hover { background:#241F3D; color:#fff; }
 /* UP NEXT card — slides in at credits time, never interrupts */
 #web-player .wp-next { position:absolute; right:2rem; bottom:170px; background:#16132AF0; border:1px solid #37315C;
                        border-radius:14px; padding:1rem 1.2rem; max-width:340px; box-shadow:0 6px 26px #000C; }

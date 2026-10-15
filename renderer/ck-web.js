@@ -104,7 +104,7 @@
                     <button class="wp-btn wp-back">‹ Back</button><span class="wp-title"></span>
                     <span class="wp-right"><span class="wp-clock"></span><span class="wp-ends"></span></span>
                   </div>
-                  <button class="wp-skip hidden">Skip intro ⏭</button>
+                  <div class="wp-skiprow hidden"><button class="wp-skip">Skip intro ⏭</button><button class="wp-skipx">Dismiss</button></div>
                   <div class="wp-shuttle hidden"></div>
                   <div class="wp-next hidden">
                     <div class="wpn-tag">UP NEXT</div><div class="wpn-title"></div>
@@ -445,12 +445,20 @@
 
             // ---- Skip intro + UP NEXT card + clock ("Ends h:mm"), 1-second ticker ----
             const skipBtn = player.querySelector('.wp-skip');
+            const skipRow = player.querySelector('.wp-skiprow');
             const nextCard = player.querySelector('.wp-next');
             player.querySelector('.wpn-title').textContent = nextLabel || '';
             skipBtn.onclick = () => {
                 if (state.skipMode === 'after' && state.pendingAfter > 0) {
-                    skipBtn.classList.add('hidden'); seekTo(state.pendingAfter / 1000);
-                } else { state.introHandled = true; skipBtn.classList.add('hidden'); seekTo(introToMs / 1000); }
+                    skipRow.classList.add('hidden'); seekTo(state.pendingAfter / 1000);
+                } else { state.introHandled = true; skipRow.classList.add('hidden'); seekTo(introToMs / 1000); }
+            };
+            // Dismiss (AJ Oct 15): hides the skip pill for the rest of this window, like
+            // the next-up card's Dismiss
+            player.querySelector('.wp-skipx').onclick = () => {
+                if (state.skipMode === 'after') state.afterDismissed = true;
+                else state.introHandled = true;
+                skipRow.classList.add('hidden');
             };
             const fireNext = () => {
                 if (!state || !state.dur) { closePlayer(true, { next: true }); return; }
@@ -480,15 +488,16 @@
                     player.querySelector('.wp-ends').textContent =
                         'Ends ' + clock(new Date(Date.now() + remaining * 1000));
                     // credits lead, best signal first (same rule as the TV player): the
-                    // episode's own last subtitle cue → family's learned credits clicks → 90s
+                    // episode's own last subtitle cue → family's learned credits clicks
                     const subsLead = state.lastCue > 0 ? state.dur - state.lastCue - 2 : -1;
+                    // card pops where the credits START, not early (AJ Oct 15 "right at the
+                    // end almost"): the server already biases learned clicks 30s early, so
+                    // the old client +30s stacked into "minutes early". No signal at all =
+                    // 10s before file end (was a 90s guess). Still capped at 3min.
                     const lead = (subsLead >= 15 && subsLead <= 300) ? subsLead
-                        : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 90);
+                        : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 10);
                     const remReal = state.dur - cur();
-                    // card pops ~30s BEFORE the CONTENT ends (AJ Oct 3 "pop up on the show"):
-                    // credits lead from the real signals + 30s of show still playing, capped
-                    // at 3min so a bad credits estimate can't park it up minutes early (Oct 1)
-                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= Math.min(lead + 30, 180)) {
+                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= Math.min(lead, 180)) {
                         state.nextShown = true;
                         nextCard.classList.remove('hidden');
                     }
@@ -497,7 +506,7 @@
                         const p = cur() * 1000;
                         const inWin = p >= introFromMs && p <= introToMs - 2000;
                         if (inWin) { state.skipMode = 'intro'; skipBtn.textContent = 'Skip intro ⏭'; }
-                        skipBtn.classList.toggle('hidden', !inWin);
+                        skipRow.classList.toggle('hidden', !inWin);
                         if (!inWin && p >= introToMs - 2000) state.introHandled = true;
                     }
                     // after-credits (AJ Sep 16): jump-to-scene button per stinger, in sequence
@@ -507,12 +516,12 @@
                         const prevEnd = Math.max(-1, ...afterCredits.filter(x => x.to <= p).map(x => x.to));
                         const creditsPt = (state.dur * 1000) - (creditsMs || 90000);
                         const floor = nextAc ? Math.max(creditsPt, nextAc.from - 90000, prevEnd) : Infinity;
-                        const inAfter = nextAc && p >= floor && p < nextAc.from - 1500 && !(introFromMs >= 0 && p <= introToMs);
+                        const inAfter = nextAc && !state.afterDismissed && p >= floor && p < nextAc.from - 1500 && !(introFromMs >= 0 && p <= introToMs);
                         if (inAfter) {
                             state.skipMode = 'after'; state.pendingAfter = nextAc.from;
                             skipBtn.textContent = afterCredits.length > 1 ? `After credits ▶ (${afterCredits.indexOf(nextAc) + 1}/${afterCredits.length})` : 'After credits ▶';
-                            skipBtn.classList.remove('hidden');
-                        } else if (state.skipMode === 'after') { skipBtn.classList.add('hidden'); state.skipMode = 'intro'; }
+                            skipRow.classList.remove('hidden');
+                        } else if (state.skipMode === 'after') { skipRow.classList.add('hidden'); state.skipMode = 'intro'; }
                     }
                 }
                 paintCue();
