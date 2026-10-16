@@ -159,9 +159,10 @@ const _lvTune = async (id) => {   // id = full meta id (cklive:espn) → [{url, 
 // Top BANNER (AJ Sep 18: "banner across all things when the device limit is reached") — red
 // bar pinned to the top of the window, auto-clears after 8s, click to dismiss. Same treatment
 // the apps show, so a blocked Live TV tune reads the same everywhere.
-function lvBanner(msg) {
+function lvBanner(msg, title = 'Live TV locked') {
     // CENTERED CouchKing-panel modal with an OK button (AJ Sep 18: "in the middle of the
-    // screen with an OK button … on firetv, desktop and web").
+    // screen with an OK button … on firetv, desktop and web"). Title is a param since the
+    // VOD device-limit banner (AJ Oct 16) reuses this exact modal.
     document.getElementById('lv-lock')?.remove();
     const scrim = document.createElement('div'); scrim.id = 'lv-lock';
     scrim.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.72);' +
@@ -170,7 +171,7 @@ function lvBanner(msg) {
     p.style.cssText = 'background:#1B1830;border:1px solid #7B5BF5;border-radius:20px;padding:28px 26px;' +
         'max-width:min(420px,88vw);text-align:center;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,.6)';
     const ic = document.createElement('div'); ic.textContent = '🔒'; ic.style.fontSize = '42px';
-    const t = document.createElement('div'); t.textContent = 'Live TV locked'; t.style.cssText = 'font-weight:800;font-size:20px;margin-top:10px';
+    const t = document.createElement('div'); t.textContent = title; t.style.cssText = 'font-weight:800;font-size:20px;margin-top:10px';
     const s = document.createElement('div'); s.textContent = msg; s.style.cssText = 'color:#A9A5C0;font-size:14px;margin:8px 0 18px';
     const ok = document.createElement('button'); ok.textContent = 'OK';
     ok.style.cssText = 'background:#7B5BF5;color:#fff;border:0;border-radius:12px;padding:11px 34px;font-size:15px;font-weight:700;cursor:pointer';
@@ -1470,6 +1471,11 @@ async function episodePage(t, meta, ep, autoplay = false) {
         tries++;
     }
     if (token !== epPollToken) return;
+    if (streams[0]?.ckBlocked) {   // device limit: banner, no stream rows (AJ Oct 16)
+        $('ep-note').textContent = 'Too many devices are streaming on this account.';
+        lvBanner(String(streams[0].title || '').replace(/\n/g, ' '), 'Too many devices');
+        return;
+    }
     if (!streams.length) {
         $('ep-note').textContent = !aired ? 'This episode hasn’t aired yet.' : 'Still getting this ready — check back in a minute.';
         return;
@@ -1539,6 +1545,13 @@ async function pickStream(sid, label, autoFirst = false) {
     const type = sid.includes(':') ? 'series' : 'movie';
     const d = await j(`${withUser(base)}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
     const streams = d?.streams || [];
+    // VOD device limit (AJ Oct 16 "a banner that pops up, no streams"): same centered
+    // modal as the Live TV slots banner, nothing else rendered.
+    if (streams[0]?.ckBlocked) {
+        holder.innerHTML = '';
+        lvBanner(String(streams[0].title || '').replace(/\n/g, ' '), 'Too many devices');
+        return;
+    }
     if (!streams.length) { holder.innerHTML = '<div class="muted">Getting this ready — try again in a minute.</div>'; return; }
     const start = (st) => {
         if (!S.guest && cur?.meta) {
@@ -1582,6 +1595,7 @@ async function downloadFor(sid, label, meta) {
     const type = sid.includes(':') ? 'series' : 'movie';
     const d = await j(`${withUser(base)}/stream/${type}/${encodeURIComponent(sid)}.json`, { timeoutMs: 30000 });
     const st = (d?.streams || [])[0];
+    if (st?.ckBlocked) { lvBanner(String(st.title || '').replace(/\n/g, ' '), 'Too many devices'); return; }
     if (!st) { toast('No stream to download yet — try again shortly'); return; }
     startDownload(st, sid, label);
 }
@@ -1829,9 +1843,19 @@ function finishPointSec(durSec, creditsMs, lastCueSec, isShow) {
     const cap = durSec * (isShow ? 0.92 : 0.90);
     return Math.min(Math.max(durSec - lead, durSec * 0.8), cap);
 }
+// VOD slot heartbeat (AJ Oct 16 "work like live tv, just as fast"): claim/refresh this
+// device's streaming slot every 15s while the player is open, so the device limit only
+// ever blocks while someone is REALLY watching, and a crash frees the slot in ≤75s.
+setInterval(() => {
+    if (!playing || !S.subKey) return;
+    j(`${SERVICE}/player/beat?k=${S.subKey}&u=${encodeURIComponent(S.useg || '')}`);
+}, 15000);
 ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     $('playing').classList.add('hidden');
     const p = playing; playing = null;
+    // free the streaming slot the INSTANT the player closes (Live TV close-free parity);
+    // an episode switch re-claims via /player/resume seconds later, same IP = same slot
+    if (p && S.subKey) j(`${SERVICE}/player/beat?k=${S.subKey}&stop=1`);
     if (p?.placeholder) {
         // the waiting clip counts for NOTHING — no progress beacon, no watched, no autonext
         // (sitting out the 5-min loop was marking the EPISODE watched + advancing CW).
@@ -1846,7 +1870,7 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     // a human's next-click near the end also teaches the server where credits start
     await j(`${SERVICE}/player/progress`, { method: 'POST', body: {
         k: S.subKey, u: S.useg, i: p.imdb, s: p.s || '', e: p.e || '',
-        pos: posMs, dur: durMs,
+        pos: posMs, dur: durMs, stop: 1,   // sit-down over → server frees the slot, never re-claims it
         ...(next && credits >= 5000 && credits <= 300000 ? { credits } : {}) } });
     // the exact same watched rule as the Firestick: only past the finish point (credits
     // lead, ≥80% floor) AND a real sitting (2+ min or true end) — a bogus near-end
