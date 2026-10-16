@@ -83,6 +83,7 @@
     async function webPlay({ url, title, startSec = 0, seekStep = 10, sid = '', subs = [],
                        subScale = 1.0, subLang = 'en', subBg = false, subOutline = true, subPos = 0,
                        introFromMs = -1, introToMs = -1, creditsMs = 0, probeDur = 0,
+                       recapFromMs = -1, recapToMs = -1, creditsAtMs = 0, refetchMarkers = null,
                        afterCredits = [],
                        localFile = '', inlineSubs = [],
                        nextLabel = '', hasNext = false, autonext = true }, hooks = null) {
@@ -91,7 +92,7 @@
             const SVC = await service();
             const u = b64u(url);
             state = { offset: localFile ? 0 : startSec, dur: probeDur || 0, u, SVC, step: seekStep || 10,
-                      cues: [], lastCue: 0, introHandled: false, nextShown: false, speed: 1,
+                      cues: [], lastCue: 0, introHandled: false, recapHandled: false, nextShown: false, speed: 1,
                       started: false, fbTimer: null };
             player = document.createElement('div');
             player.id = 'web-player';
@@ -451,12 +452,18 @@
             skipBtn.onclick = () => {
                 if (state.skipMode === 'after' && state.pendingAfter > 0) {
                     skipRow.classList.add('hidden'); seekTo(state.pendingAfter / 1000);
+                } else if (state.skipMode === 'recap') {
+                    // Skip Recap (Oct 16, parity with the TV player): recapTo = the measured
+                    // intro start, so this can never overshoot content
+                    state.recapHandled = true; skipRow.classList.add('hidden');
+                    if (recapToMs > cur() * 1000) seekTo(recapToMs / 1000);
                 } else { state.introHandled = true; skipRow.classList.add('hidden'); seekTo(introToMs / 1000); }
             };
             // Dismiss (AJ Oct 15): hides the skip pill for the rest of this window, like
             // the next-up card's Dismiss
             player.querySelector('.wp-skipx').onclick = () => {
                 if (state.skipMode === 'after') state.afterDismissed = true;
+                else if (state.skipMode === 'recap') state.recapHandled = true;
                 else state.introHandled = true;
                 skipRow.classList.add('hidden');
             };
@@ -480,6 +487,22 @@
                     navigator.mediaSession.setActionHandler('nexttrack', hasNext ? fireNext : null);
                 } catch (e) {}
             }
+            // MARKER RE-POLL (Oct 16, AJ's Landman E10): the analyzer often publishes
+            // intro/recap windows DURING the first viewer's watch — one fetch at open missed
+            // them and the pills never appeared. Markers only; never touches position.
+            if (refetchMarkers && introFromMs < 0 && recapFromMs < 0) {
+                for (const d of [300000, 720000]) setTimeout(async () => {
+                    if (!state || introFromMs >= 0) return;
+                    try {
+                        const r = await refetchMarkers();
+                        if (!state || !r) return;
+                        if (r.introFrom != null && r.introTo > r.introFrom) { introFromMs = r.introFrom; introToMs = r.introTo; }
+                        if (r.recapFrom != null && r.recapTo > r.recapFrom) { recapFromMs = r.recapFrom; recapToMs = r.recapTo; }
+                        if (r.creditsAt > 0) creditsAtMs = r.creditsAt;
+                        if (r.credits > 0) creditsMs = r.credits;
+                    } catch (e) {}
+                }, d);
+            }
             state.tick = setInterval(() => {
                 if (!state) return;
                 player.querySelector('.wp-clock').textContent = clock(new Date());
@@ -490,19 +513,41 @@
                     // credits lead, best signal first (same rule as the TV player): the
                     // episode's own last subtitle cue → family's learned credits clicks
                     const subsLead = state.lastCue > 0 ? state.dur - state.lastCue - 2 : -1;
+                    // exact end-credits chapter from the served file (Oct 16) beats everything
+                    const exactLead = creditsAtMs > 0 ? state.dur - creditsAtMs / 1000 : -1;
                     // card pops where the credits START, not early (AJ Oct 15 "right at the
                     // end almost"): the server already biases learned clicks 30s early, so
                     // the old client +30s stacked into "minutes early". No signal at all =
                     // 10s before file end (was a 90s guess). Still capped at 3min.
-                    const lead = (subsLead >= 15 && subsLead <= 300) ? subsLead
-                        : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : 10);
+                    // +10s: pop BEFORE the content ends (AJ Oct 16 "10 seconds before the
+                    // episode is over" — the learned next-click median is measured after people
+                    // sat through some credits, so the signal alone runs late). No signal at
+                    // all = 60s before file end (10s was deep in the credits on first watch).
+                    const sig = (exactLead >= 10 && exactLead <= 600) ? exactLead
+                        : (subsLead >= 15 && subsLead <= 300) ? subsLead
+                        : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : -1);
+                    const lead = sig >= 0 ? sig + 10 : 60;
                     const remReal = state.dur - cur();
                     if (hasNext && !state.nextShown && remReal > 0 && remReal <= Math.min(lead, 180)) {
                         state.nextShown = true;
                         nextCard.classList.remove('hidden');
                     }
+                    // Skip Recap window (Oct 16): sits before the intro; chapter- or
+                    // subtitle-derived ("previously on" cue), end = measured intro start
+                    if (!state.recapHandled && recapFromMs >= 0 && recapToMs > recapFromMs) {
+                        const p = cur() * 1000;
+                        const inR = p >= recapFromMs && p <= recapToMs - 2000;
+                        if (inR) {
+                            state.skipMode = 'recap'; skipBtn.textContent = 'Skip recap ⏭';
+                            skipRow.classList.remove('hidden');
+                        } else if (state.skipMode === 'recap') {
+                            skipRow.classList.add('hidden'); state.skipMode = 'intro';
+                            if (p >= recapToMs - 2000) state.recapHandled = true;
+                        }
+                    }
                     // learned skip-intro window (from /player/resume): button lives inside it
-                    if (!state.introHandled && introFromMs >= 0 && introToMs > introFromMs) {
+                    if (!state.introHandled && introFromMs >= 0 && introToMs > introFromMs
+                        && state.skipMode !== 'recap') {
                         const p = cur() * 1000;
                         const inWin = p >= introFromMs && p <= introToMs - 2000;
                         if (inWin) { state.skipMode = 'intro'; skipBtn.textContent = 'Skip intro ⏭'; }
@@ -546,6 +591,12 @@
                 if (!localFile && state && !(state.dur > 0 && cur() >= state.dur - 45)) {
                     state.endedRetries = (state.endedRetries || 0) + 1;
                     if (state.endedRetries <= 4) { seekTo(cur()); return; }
+                }
+                // waiting-clip signature duration (~30s/~300s "getting ready" card): LOOP,
+                // never "finish" — ending it marked episodes watched / advanced while the
+                // real file was still caching (AJ Oct 16, 5-minute cutoff on other clients)
+                if (!localFile && state && ((state.dur >= 295 && state.dur <= 305) || (state.dur >= 29 && state.dur <= 31))) {
+                    seekTo(0); v.play().catch(() => {}); return;
                 }
                 // finished for real: autoplay-next rides the exit (app decides via watched
                 // rules); flag it so a finished episode advances even at odd durations

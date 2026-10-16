@@ -1740,6 +1740,8 @@ async function play(url, label, sid, subs = null, opts = {}) {
     const [, s, e] = sid.split(':');
     // cross-device resume + learned intro window + learned credits point, one call
     let startSec = 0, introFromMs = -1, introToMs = -1, creditsMs = 0, acList = [];
+    let recapFromMs = -1, recapToMs = -1, creditsAtMs = 0;
+    const resumeUrl = `${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`;
     try {
         if (opts.ph || opts.fromZero) throw 0;   // waiting clip / fresh swap: always from 0:00
         const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`);
@@ -1747,7 +1749,9 @@ async function play(url, label, sid, subs = null, opts = {}) {
             if (String(r.s || '') === String(s || '') && String(r.e || '') === String(e || '') && r.pos > 60000 && r.pct < 92)
                 startSec = Math.floor(r.pos / 1000);
             if (r.introFrom != null && r.introTo > r.introFrom) { introFromMs = r.introFrom; introToMs = r.introTo; }
+            if (r.recapFrom != null && r.recapTo > r.recapFrom) { recapFromMs = r.recapFrom; recapToMs = r.recapTo; }
             if (r.credits > 0) creditsMs = r.credits;
+            if (r.creditsAt > 0) creditsAtMs = r.creditsAt;
             if (Array.isArray(r.afterCredits)) acList = r.afterCredits;
         }
     } catch {}
@@ -1766,6 +1770,8 @@ async function play(url, label, sid, subs = null, opts = {}) {
         subBg: PREF('subbg', false), subOutline: PREF('suboutline', true), subPos: PREF('subpos', 0),
         seekStep: PREF('seek', 10),
         introFromMs, introToMs, creditsMs, afterCredits: acList,
+        recapFromMs, recapToMs, creditsAtMs,
+        refetchMarkers: () => j(resumeUrl).catch(() => null),
         hasNext: !!(next && hasService()), autonext: PREF('autonext', true),
         nextLabel: next ? `${cur?.meta?.name || ''} S${next.season}E${next.episode}${next.name ? ' — ' + next.name : ''}` : '' });
 }
