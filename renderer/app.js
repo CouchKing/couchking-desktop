@@ -1750,6 +1750,16 @@ async function startPhPoll(sid, label) {
 }
 async function play(url, label, sid, subs = null, opts = {}) {
     phPollTok++;   // starting anything cancels a pending waiting-screen poll
+    // PRE-PLAY slot check (AJ Oct 16 "just the banner, no 18s clip"): the slot can be taken
+    // between the list fetch and the click — the play URL would then serve the too-many
+    // message clip. Ask at the press instead; "no slot" → banner only, player never opens.
+    if (!opts.ph && S.subKey) {
+        const b = await j(`${SERVICE}/player/beat?k=${S.subKey}&u=${encodeURIComponent(S.useg || '')}`);
+        if (b && b.ok === false) {
+            lvBanner('Too many devices are streaming on this account. Stop one, then press play again.', 'Too many devices');
+            return;
+        }
+    }
     const imdb = sid.split(':')[0];
     const [, s, e] = sid.split(':');
     // cross-device resume + learned intro window + learned credits point, one call
