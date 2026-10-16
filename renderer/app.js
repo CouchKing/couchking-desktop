@@ -15,6 +15,16 @@ const j = async (url, opts = {}) => {
     const r = await ck.http({ url, ...opts });
     try { return JSON.parse(r.text); } catch { return null; }
 };
+// account-endpoint fetch: a 401/403 on a stored token means the server revoked it
+// (/logout, password change) — wipe the session and land on sign-in instead of living
+// on local state forever (AJ Oct 16: /logout "kept him signed into everything")
+const acctJ = async (url, opts = {}) => {
+    const r = await ck.http({ url, ...opts });
+    if ((r?.status === 401 || r?.status === 403) && S?.token) {
+        localStorage.removeItem('ck'); location.reload(); return null;
+    }
+    try { return JSON.parse(r.text); } catch { return null; }
+};
 
 // external links (terms/privacy/downloads) — browser opens a tab, desktop the system browser
 document.addEventListener('click', (e) => {
@@ -100,7 +110,7 @@ async function bootstrap() {
     // assigned addon auto-install (same as the store app) + full account state
     const acc = await j(`${SERVICE}/tvapp/access?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`);
     S.access = acc && acc.allowed !== undefined ? { expires: acc.expires || '', daysLeft: acc.daysLeft } : null;
-    S.state = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`) || {};
+    S.state = await acctJ(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`) || {};
     S.addons = S.state.addons || [];
     if (!S.addons.length && acc?.allowed && acc.addon) S.addons = [{ url: acc.addon, name: 'CouchKing' }];
     // subKey rides inside the addon url ({"subKey":"CKG-…"} url-encoded) — scan EVERY
@@ -570,7 +580,7 @@ function syncSig() {
 }
 setInterval(async () => {
     if (S.guest || !S.token || playing) return;
-    const st = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`);
+    const st = await acctJ(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`);
     if (!st) return;
     S.state = st; applyAccountPrefs();
     // the active profile may have been renamed/recolored on another device — keep the
@@ -2412,7 +2422,7 @@ function profileManager() {
 // ---------- account write-back (server MERGES, so partial pushes are safe) ----------
 async function pushAccount() {
     if (S.guest || !S.token) return;
-    await j(`${SERVICE}/tvapp/state`, { method: 'POST', body: { email: S.email, token: S.token, appVer: APPVER(), state: S.state } });
+    await acctJ(`${SERVICE}/tvapp/state`, { method: 'POST', body: { email: S.email, token: S.token, appVer: APPVER(), state: S.state } });
 }
 function stamp(map, id) { const m = map || {}; m[id] = Date.now(); return m; }
 // most-recent-first Continue list, cap 12 — same shape Store.pushContinue writes
