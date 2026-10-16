@@ -1844,11 +1844,21 @@ function finishPointSec(durSec, creditsMs, lastCueSec, isShow) {
     return Math.min(Math.max(durSec - lead, durSec * 0.8), cap);
 }
 // VOD slot heartbeat (AJ Oct 16 "work like live tv, just as fast"): claim/refresh this
-// device's streaming slot every 15s while the player is open, so the device limit only
-// ever blocks while someone is REALLY watching, and a crash frees the slot in ≤75s.
-setInterval(() => {
+// device's streaming slot every 15s while the player is open. ok:false = another IP holds
+// the slot — after 3 consecutive misses (~45s, so a brief IP flap never kicks the only
+// watcher) STOP playback with the banner, the VOD version of Live TV's mid-stream 429
+// (an already-open player never re-hits the play gate, so the client enforces mid-play).
+let vodMiss = 0;
+setInterval(async () => {
     if (!playing || !S.subKey) return;
-    j(`${SERVICE}/player/beat?k=${S.subKey}&u=${encodeURIComponent(S.useg || '')}`);
+    const r = await j(`${SERVICE}/player/beat?k=${S.subKey}&u=${encodeURIComponent(S.useg || '')}`);
+    if (r && r.ok === false && playing && !playing.placeholder) {
+        if (++vodMiss >= 3) {
+            vodMiss = 0;
+            try { ckStop(); } catch {}
+            lvBanner('Too many devices are streaming on this account. Stop one, then press play again.', 'Too many devices');
+        }
+    } else vodMiss = 0;
 }, 15000);
 ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
     $('playing').classList.add('hidden');
