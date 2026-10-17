@@ -125,6 +125,7 @@
                       <div class="wp-cell"><span>Speed</span><button class="wp-btn wp-speed">1×</button></div>
                       <div class="wp-cell"><span>Restart</span><button class="wp-btn wp-restart" title="Play from beginning">⟲</button></div>
                       <div class="wp-cell"><span>Info</span><button class="wp-btn wp-info">ⓘ</button></div>
+                      <div class="wp-cell"><span>Report</span><button class="wp-btn wp-report" title="Report a problem">🛟</button></div>
                       <div class="wp-cell"><span>Volume</span><input class="wp-vol" type="range" min="0" max="1" step=".05" value="1"></div>
                       <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">⛶</button></div>
                     </div>
@@ -366,6 +367,42 @@
                     `position ${fmt(cur())}`,
                 ].filter(Boolean).join('\n');
                 infoBox.classList.remove('hidden');
+            };
+            // 🛟 REPORT A PROBLEM (AJ Oct 17): type it, Send → the server's Problem Reports
+            // channel with who/where/version attached. Identity rides window.ckIdent (app.js
+            // keeps it current with the active profile); absent = IP-labelled.
+            const reportBtn = player.querySelector('.wp-report');
+            if (reportBtn) reportBtn.onclick = () => {
+                if (!infoBox.classList.contains('hidden')) infoBox.classList.add('hidden');
+                let box = player.querySelector('.wp-reportbox');
+                if (box) { box.remove(); return; }
+                box = document.createElement('div');
+                box.className = 'wp-reportbox';
+                box.innerHTML = `<div class="wp-rpt-title">🛟 Report a problem</div>
+                    <textarea class="wp-rpt-text" rows="3" placeholder="What's wrong? Type it here…"></textarea>
+                    <div class="wp-rpt-row"><button class="wp-btn wp-rpt-send">Send</button>
+                    <button class="wp-btn wp-rpt-cancel">Cancel</button></div>`;
+                player.querySelector('.wp-ui').appendChild(box);
+                const ta = box.querySelector('.wp-rpt-text'); ta.focus();
+                box.querySelector('.wp-rpt-cancel').onclick = () => box.remove();
+                box.querySelector('.wp-rpt-send').onclick = async () => {
+                    const txt = ta.value.trim();
+                    if (!txt) { ta.focus(); return; }
+                    const id = (window.ckIdent || {});
+                    const posS = Math.floor(cur());
+                    try {
+                        await fetch(`${SVC}/tvapp/report`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                text: txt, u: id.user || '', key: id.key || '',
+                                v: 'desktop', model: navigator.platform || 'desktop',
+                                ctx: `Desktop player — ${title || '?'} @ ${Math.floor(posS / 60)}m${posS % 60}s`,
+                            }),
+                        });
+                        box.innerHTML = '<div class="wp-rpt-title">Sent — thank you! 🛟</div>';
+                        setTimeout(() => box.remove(), 1600);
+                    } catch { box.innerHTML = '<div class="wp-rpt-title">Couldn\'t send — try again in a minute</div>'; setTimeout(() => box.remove(), 2200); }
+                };
             };
 
             // real duration for the timeline (fMP4 stream itself reports none); the desktop

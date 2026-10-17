@@ -5,6 +5,9 @@ const TMDB = 'b05e998c589bf1393c1059bd1d4c5895';
 const CINE = 'https://v3-cinemeta.strem.io';
 let SERVICE = 'https://couchking.app';
 let S = { email: '', token: '', user: '', useg: '', subKey: '', addons: [], state: {}, guest: false, access: null };
+// live identity for the player's 🛟 Report a problem (ck-web.js reads window.ckIdent at send
+// time): a getter so it always reflects the ACTIVE profile without touching S.useg sites. (AJ Oct 17)
+Object.defineProperty(window, 'ckIdent', { get: () => ({ key: S.subKey, user: S.useg }) });
 const APPVER = () => (ck.platform === 'web' ? 'web' : 'desktop') + '-0.9';
 // the app is a NEUTRAL TRACKER SHELL until an account with an assigned service signs in
 // (guests and key-less accounts browse + track + see where-to-watch; no stream buttons)

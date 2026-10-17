@@ -255,6 +255,16 @@ select:focus, select:hover { border-color:var(--accent); }
 #web-player .wp-infobox { position:absolute; top:76px; right:1.2rem; background:#16132ADD; border:1px solid #37315C;
                           border-radius:12px; padding:.8rem 1rem; color:#d8d5ea; font-size:.85rem; font-weight:700;
                           white-space:pre-line; }
+/* 🛟 Report a problem box (AJ Oct 17) — centered card over the player */
+#web-player .wp-reportbox { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+                            background:#1B1830F2; border:1px solid #37315C; border-radius:16px; padding:1.1rem 1.2rem;
+                            width:min(460px,86vw); z-index:30; box-shadow:0 10px 40px #000A; }
+#web-player .wp-rpt-title { color:#F2EFFF; font-size:1.05rem; font-weight:800; margin-bottom:.7rem; }
+#web-player .wp-rpt-text { width:100%; box-sizing:border-box; background:#1C1832; border:1px solid #37315C;
+                           border-radius:10px; color:#F2EFFF; font-size:.95rem; padding:.7rem .8rem; resize:none; }
+#web-player .wp-rpt-row { display:flex; gap:.6rem; margin-top:.8rem; }
+#web-player .wp-rpt-send { background:#7B5BF5; color:#fff; border:0; border-radius:24px; padding:.55rem 1.3rem; font-weight:700; cursor:pointer; }
+#web-player .wp-rpt-cancel { background:#2C2649; color:#F2EFFF; border:0; border-radius:24px; padding:.55rem 1.3rem; font-weight:700; cursor:pointer; }
 #web-player .wp-bottom { padding:0 1.4rem 1rem; background:linear-gradient(0deg,#000D, transparent); }
 #web-player .wp-bar { position:relative; height:6px; background:#FFFFFF3A; border-radius:99px; cursor:pointer; margin-bottom:.4rem; }
 #web-player .wp-fill { height:100%; background:var(--accent); border-radius:99px; }
