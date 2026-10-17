@@ -456,6 +456,8 @@
                     // Skip Recap (Oct 16, parity with the TV player): recapTo = the measured
                     // intro start, so this can never overshoot content
                     state.recapHandled = true; skipRow.classList.add('hidden');
+                    // skipMode must leave 'recap' or the intro branch (guarded on it) never shows again
+                    state.skipMode = 'intro';
                     if (recapToMs > cur() * 1000) seekTo(recapToMs / 1000);
                 } else { state.introHandled = true; skipRow.classList.add('hidden'); seekTo(introToMs / 1000); }
             };
@@ -463,7 +465,7 @@
             // the next-up card's Dismiss
             player.querySelector('.wp-skipx').onclick = () => {
                 if (state.skipMode === 'after') state.afterDismissed = true;
-                else if (state.skipMode === 'recap') state.recapHandled = true;
+                else if (state.skipMode === 'recap') { state.recapHandled = true; state.skipMode = 'intro'; }
                 else state.introHandled = true;
                 skipRow.classList.add('hidden');
             };
