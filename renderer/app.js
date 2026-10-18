@@ -389,7 +389,9 @@ let lvRegion = '';
 async function lvRenderBanner(el) {
     const d = await j(`${SERVICE}/live/${S.subKey}/games.json`);
     const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-    if (!d?.sports?.length) { el.innerHTML = ''; return; }
+    // 🔴 creator-live banner pinned at the TOP of Live TV (only when AJ streams)
+    const addCreator = () => { const cb = document.createElement('div'); el.insertBefore(cb, el.firstChild); creatorBanner(cb); };
+    if (!d?.sports?.length) { el.innerHTML = ''; addCreator(); return; }
     // REGION-AWARE (AJ Sep 17): Fútbol rides with the UK view (it's not American sports);
     // USA/UK/CA each see the games on THEIR channels — live strips and upcoming both.
     const want = lvRegion || 'US';
@@ -397,7 +399,7 @@ async function lvRenderBanner(el) {
     const sports = d.sports.map(sp => ({ ...sp,
         live: sp.live.filter(g => keep(sp, g)), soon: sp.soon.filter(g => keep(sp, g)) }))
         .filter(sp => sp.live.length || sp.soon.length);
-    if (!sports.length) { el.innerHTML = ''; return; }
+    if (!sports.length) { el.innerHTML = ''; addCreator(); return; }
     let h = '';
     const card = (g, live) => `<div class="lvb-card${live ? ' live' : ''}" data-ch="${esc(g.chid)}" data-n="${esc(g.t)}">
         <div class="lvb-t">${esc(g.t)}</div><div class="lvb-m">${live ? '<span class="lvb-dot"></span>LIVE' : esc(g.when)} • ${esc(g.ch)}</div></div>`;
@@ -407,6 +409,7 @@ async function lvRenderBanner(el) {
     if (soon.length)
         h += `<div class="lvb-strip"><div class="lvb-h">📅 Upcoming games</div><div class="lvb-row">${soon.map(g => card({ ...g, t: g._e + ' ' + g.t }, false)).join('')}</div></div>`;
     el.innerHTML = h;
+    addCreator();   // 🔴 creator banner at the top of Live TV
     el.querySelectorAll('[data-ch]').forEach(c => c.onclick = () => _lvPlayCh(c.dataset.ch, c.dataset.n, [], c));
 }
 // favorite toggle from anywhere a row shows (AJ Sep 17: "favorite … if i search it
