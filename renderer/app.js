@@ -486,6 +486,12 @@ async function livetvPage() {
     }
     if (sel) sel.style.display = '';
     if (sel && !sel._wired) { sel._wired = 1; sel.onchange = () => { lvRegion = sel.value; lvGenre = 'Guide'; lvShowAll = false; livetvPage(); }; }
+    if (sel) lvGuideData().then(d => {
+        const regs = d && d.regions;
+        if (!Array.isArray(regs) || !regs.length || sel._regFilled) return;
+        sel._regFilled = 1;
+        sel.innerHTML = regs.map(r => `<option value="${r.code || ''}"${(r.code || '') === lvRegion ? ' selected' : ''}>${r.flag || ''} ${r.label || r.code}</option>`).join('');
+    }).catch(() => {});
     const banner = $('livetv-banner');
     if (banner) lvRenderBanner(banner);   // async, fills in when ready
     grid.innerHTML = '<div class="lv-loading">Loading…</div>';
