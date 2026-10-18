@@ -1022,12 +1022,54 @@ async function top10Row(holder) {
     });
     holder.appendChild(strip);
 }
+// 🔴 CREATOR LIVE (AJ's Twitch) — banner on Home + a fullscreen in-app player. Shows only
+// while live; frame/title/viewers refresh each Home load (server caches 60s).
+async function creatorBanner(holder) {
+    try {
+        const info = await j(`${SERVICE}/live/${S.subKey || 'x'}/creator.json`);
+        if (!info || !info.live) { holder.remove(); return; }
+        const thumb = info.thumb ? info.thumb + (info.thumb.includes('?') ? '&' : '?') + 'cb=' + Math.floor(Date.now() / 30000) : '';
+        holder.className = 'creator-live';
+        holder.innerHTML = `
+            <div class="cl-frame">${thumb ? `<img src="${thumb}" alt="">` : ''}</div>
+            <div class="cl-info">
+              <div class="cl-top"><span class="cl-badge">🔴 LIVE</span>
+                <span class="cl-name">${(info.name || 'KruzAurora')} · on ${(info.platform || 'Twitch')}</span>
+                ${info.viewers > 0 ? `<span class="cl-vw">· ${info.viewers} watching</span>` : ''}</div>
+              <div class="cl-title">${(info.title || 'Live now').replace(/</g, '&lt;')}</div>
+              ${info.game ? `<div class="cl-game">${info.game.replace(/</g, '&lt;')}</div>` : ''}
+              <button class="cl-watch">▶ Watch</button>
+            </div>`;
+        const open = () => openCreatorPlayer(info);
+        holder.querySelector('.cl-watch').onclick = open;
+        holder.querySelector('.cl-frame').onclick = open;
+    } catch { holder.remove(); }
+}
+function openCreatorPlayer(info) {
+    const path = info.embedPath || `/live/twitchembed?c=${info.channel || ''}`;
+    let chat = false;
+    const ov = document.createElement('div');
+    ov.className = 'creator-player';
+    const src = () => `${SERVICE}${path}${chat ? (path.includes('?') ? '&' : '?') + 'chat=1' : ''}`;
+    ov.innerHTML = `<div class="cp-bar">
+        <span>🔴 ${(info.name || 'KruzAurora')} — ${(info.title || '').replace(/</g, '&lt;').slice(0, 60)}</span>
+        <span><button class="cp-chat">💬 Chat</button><button class="cp-close">✕</button></span></div>
+        <iframe allow="autoplay; fullscreen; encrypted-media" allowfullscreen src="${src()}"></iframe>`;
+    document.body.appendChild(ov);
+    const ifr = ov.querySelector('iframe');
+    ov.querySelector('.cp-close').onclick = () => ov.remove();
+    ov.querySelector('.cp-chat').onclick = (e) => { chat = !chat; e.target.classList.toggle('on', chat); ifr.src = src(); };
+}
+
 async function home() {
     const rows = document.querySelector('#view-home .rows');
     rows.innerHTML = '';
     lastHeroKey = '';
     const st = pstate();
     hero(st);
+    // 🔴 creator-live banner at the TOP (only when AJ is streaming) — same as the TV app
+    const creatorHolder = document.createElement('div'); rows.appendChild(creatorHolder);
+    creatorBanner(creatorHolder);
     // Continue Watching lives in a STABLE holder so the 60s sync can repaint just it
     cwHolderEl = document.createElement('div'); rows.appendChild(cwHolderEl);
     paintContinueRow();
