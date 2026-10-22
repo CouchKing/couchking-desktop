@@ -429,7 +429,7 @@
                         // own English subs cut for THIS file — count it (AJ Oct 12, Gilmore S1E7)
                         const isUntagged = x => !(x.lang && x.lang !== 'und') && !x.title;
                         const emb = d.subs.filter(x => (isEng(x) || isUntagged(x)) && !isForced(x))
-                            .sort((a, b) => isSdh(a) - isSdh(b))
+                            .sort((a, b) => isSdh(b) - isSdh(a)) // SDH FIRST (AJ Oct 22): emb[0] is auto-selected below — the release's SDH track is the default now
                             .map(x => ({ embed: x.i, lang: 'English — in video' + (isSdh(x) ? ' (SDH)' : '') }));
                         const seen = {};
                         for (const e of emb) {
