@@ -38,8 +38,10 @@ ipcMain.handle('http', async (_e, { url, method = 'GET', body = null, timeoutMs 
         });
         clearTimeout(t);
         const text = await r.text();
-        return { ok: r.ok, status: r.status, text };
-    } catch (e) { return { ok: false, status: 0, text: String(e).slice(0, 200) }; }
+        // url = the FINAL post-redirect URL — the player's notice-clip probe reads it to see
+        // whether the stream URL still 302s to a server message clip (Oct 22)
+        return { ok: r.ok, status: r.status, url: r.url || '', text };
+    } catch (e) { return { ok: false, status: 0, url: '', text: String(e).slice(0, 200) }; }
 });
 
 ipcMain.handle('service', () => SERVICE);

@@ -412,6 +412,29 @@ async function lvRenderBanner(el) {
     addCreator();   // 🔴 creator banner at the top of Live TV
     el.querySelectorAll('[data-ch]').forEach(c => c.onclick = () => _lvPlayCh(c.dataset.ch, c.dataset.n, [], c));
 }
+// 📅 UPCOMING view (AJ Oct 17 "its own tab"): every upcoming game across ALL sports, one
+// horizontal strip PER sport (not the banner's flattened, 25-capped mix), grouped + labelled
+// like the TV app. Times are server-formatted (ET); cards tune straight to the channel.
+async function lvRenderUpcoming(grid) {
+    grid.innerHTML = '<div class="lv-loading">Loading upcoming games…</div>';
+    const d = await j(`${SERVICE}/live/${S.subKey}/games.json`);
+    if (page !== 'livetv' || lvGenre !== '📅 Upcoming') return;   // user moved on mid-fetch
+    const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const sports = (d?.sports || []);
+    let h = '';
+    for (const sp of sports) {
+        // US-only chip (only shown when no region picked), so take every upcoming game like
+        // the TV app does — no region filter. Sort by kickoff so the soonest leads each strip.
+        const soon = (sp.soon || []).slice().sort((a, b) => a.s - b.s);
+        if (!soon.length) continue;
+        h += `<div class="lvb-strip"><div class="lvb-h">${sp.emoji || ''} ${esc((sp.sport || '').toUpperCase())}</div><div class="lvb-row">` +
+            soon.map(g => `<div class="lvb-card" data-ch="${esc(g.chid)}" data-n="${esc(g.t)}">
+                <div class="lvb-t">${esc((sp.emoji ? sp.emoji + ' ' : '') + g.t)}</div>
+                <div class="lvb-m">${esc(g.when)} • ${esc(g.ch)}</div></div>`).join('') + `</div></div>`;
+    }
+    grid.innerHTML = h || '<div class="lv-loading">No upcoming games right now.</div>';
+    grid.querySelectorAll('[data-ch]').forEach(c => c.onclick = () => _lvPlayCh(c.dataset.ch, c.dataset.n, [], c));
+}
 // favorite toggle from anywhere a row shows (AJ Sep 17: "favorite … if i search it
 // because its hard to find") — server remembers per key, guide pins them
 async function _lvFavToggle(chid, btn) {
@@ -499,7 +522,11 @@ async function livetvPage() {
     // catalog extras. USA: Sports/News/Kids/Movies/Entertainment · UK: Sky Sports/EFL/News…
     const gd = await lvGuideData();
     const secs = gd ? [...new Set(gd.channels.map(c => c.section).filter(Boolean))] : [];
-    const genres = ['Guide', '★ Favorites', ...secs, ...(lvRegion ? [] : ['Local', '24/7']), 'All Channels'];
+    // 📅 Upcoming (AJ Oct 17 "upcoming games thing for all the nfl and so on, its own tab"):
+    // its own chip — every upcoming game across ALL sports, grouped by sport, in ET — from
+    // the same games.json the Live Now banner uses. US region only (games are US sports), so
+    // it sits right after Favorites only when no region is picked (parity with the TV app).
+    const genres = ['Guide', '★ Favorites', ...(lvRegion ? [] : ['📅 Upcoming']), ...secs, ...(lvRegion ? [] : ['Local', '24/7']), 'All Channels'];
     chips.innerHTML = '';
     for (const g of genres) {
         const b = document.createElement('button');
@@ -533,6 +560,7 @@ async function livetvPage() {
     }, 350); };
     chips.appendChild(sin);
     if (lvGenre === 'Guide') return lvRenderGuide(grid);
+    if (lvGenre === '📅 Upcoming') return lvRenderUpcoming(grid);
     const now = Date.now();
     if (lvGenre === '★ Favorites') {
         // full channel objects ride in guide.json favChannels — region-independent
@@ -1690,7 +1718,7 @@ async function startDownload(st, sid, label) {
     // capture the learned intro/credits windows NOW — offline play can't ask later
     let introFromMs = -1, introToMs = -1, creditsMs = 0;
     try {
-        const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`);
+        const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}&d=${ckDev()}`);
         if (r) {
             if (r.introFrom != null && r.introTo > r.introFrom) { introFromMs = r.introFrom; introToMs = r.introTo; }
             if (r.credits > 0) creditsMs = r.credits;
@@ -1789,6 +1817,24 @@ window.ckPlay = window.ckPlay || ((o) => ck.play(o));
 window.ckOnPos = window.ckOnPos || ((cb) => ck.onMpvPos(cb));
 window.ckOnExit = window.ckOnExit || ((cb) => ck.onMpvExit(cb));
 window.ckStop = window.ckStop || (() => ck.stopPlay());
+// ---- per-install DEVICE ID (Oct 22, parity w/ the TV app): one uuid per install, riding
+// stream URLs (/tbplay/ + /play/) and the /player/beat + /player/resume beacons as &d=<uuid>
+// so the server can tell this install apart behind a shared IP/key. Storage blocked
+// (private mode) → a stable in-memory id for the session.
+let _ckDevMem = '';
+function ckDev() {
+    const mint = () => (crypto.randomUUID ? crypto.randomUUID()
+        : 'ck-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10));
+    try {
+        let v = localStorage.getItem('ckdev');
+        if (!v) { v = mint(); localStorage.setItem('ckdev', v); }
+        return v;
+    } catch {
+        if (!_ckDevMem) _ckDevMem = mint();
+        return _ckDevMem;
+    }
+}
+window.ckDev = ckDev;
 let playing = null;
 // ---- "getting this episode ready" waiting flow (parity w/ iPhone/TV, AJ Oct 5):
 // the ⏳ stream plays the branded 5-min loop; NOTHING it does counts as progress, the
@@ -1814,11 +1860,15 @@ async function startPhPoll(sid, label) {
 }
 async function play(url, label, sid, subs = null, opts = {}) {
     phPollTok++;   // starting anything cancels a pending waiting-screen poll
+    // device id on the stream URL itself (Oct 22): same uuid as the beat/resume beacons,
+    // so the server's slot bookkeeping sees ONE install, not a bare IP
+    if (/\/(tbplay|play)\//.test(url) && !/[?&]d=/.test(url))
+        url += (url.includes('?') ? '&' : '?') + 'd=' + ckDev();
     // PRE-PLAY slot check (AJ Oct 16 "just the banner, no 18s clip"): the slot can be taken
     // between the list fetch and the click — the play URL would then serve the too-many
     // message clip. Ask at the press instead; "no slot" → banner only, player never opens.
     if (!opts.ph && S.subKey) {
-        const b = await j(`${SERVICE}/player/beat?k=${S.subKey}&u=${encodeURIComponent(S.useg || '')}`);
+        const b = await j(`${SERVICE}/player/beat?k=${S.subKey}&u=${encodeURIComponent(S.useg || '')}&d=${ckDev()}`);
         if (b && b.ok === false) {
             lvBanner('Too many devices are streaming on this account. Stop one, then press play again.', 'Too many devices');
             return;
@@ -1829,10 +1879,10 @@ async function play(url, label, sid, subs = null, opts = {}) {
     // cross-device resume + learned intro window + learned credits point, one call
     let startSec = 0, introFromMs = -1, introToMs = -1, creditsMs = 0, acList = [];
     let recapFromMs = -1, recapToMs = -1, creditsAtMs = 0;
-    const resumeUrl = `${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`;
+    const resumeUrl = `${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}&d=${ckDev()}`;
     try {
         if (opts.ph || opts.fromZero) throw 0;   // waiting clip / fresh swap: always from 0:00
-        const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}`);
+        const r = await j(`${SERVICE}/player/resume?k=${S.subKey}&u=${encodeURIComponent(S.useg)}&i=${imdb}&s=${s || ''}&e=${e || ''}&d=${ckDev()}`);
         if (r) {
             if (String(r.s || '') === String(s || '') && String(r.e || '') === String(e || '') && r.pos > 60000 && r.pct < 92)
                 startSec = Math.floor(r.pos / 1000);
@@ -1890,14 +1940,16 @@ ck.onMpvDead?.((d) => {
     setTimeout(() => n.remove(), 12000);
 });
 
-ckOnPos(({ pos, dur }) => {
+ckOnPos(({ pos, dur, notice }) => {
     if (!playing) return;
     playing.pos = pos; playing.dur = dur;
     if (dur > 0) $('playing-pos').textContent = `${fmt(pos)} / ${fmt(dur)}`;
     // instant start-stamp (AJ Sep 13, full-sync): the moment playback begins, position +
     // resume pointer push to the account — every other device knows within seconds,
-    // half a second of watching counts (same rule as TV v2.0)
-    if (dur > 0 && !playing.startStamped && !S.guest && !playing.placeholder) {
+    // half a second of watching counts (same rule as TV v2.0).
+    // notice = ck-web.js flagged a server message clip (too-many / not-released / unaired /
+    // no-stream / getting-ready) — it counts for NOTHING, never stamp it (Oct 22)
+    if (dur > 0 && !playing.startStamped && !S.guest && !playing.placeholder && !notice) {
         playing.startStamped = true;
         const st = pstate();
         st.positions = st.positions || {};
@@ -1925,7 +1977,7 @@ function finishPointSec(durSec, creditsMs, lastCueSec, isShow) {
 let vodMiss = 0;
 setInterval(async () => {
     if (!playing || !S.subKey) return;
-    const r = await j(`${SERVICE}/player/beat?k=${S.subKey}&u=${encodeURIComponent(S.useg || '')}`);
+    const r = await j(`${SERVICE}/player/beat?k=${S.subKey}&u=${encodeURIComponent(S.useg || '')}&d=${ckDev()}`);
     if (r && r.ok === false && playing && !playing.placeholder) {
         if (++vodMiss >= 3) {
             vodMiss = 0;
@@ -1934,12 +1986,12 @@ setInterval(async () => {
         }
     } else vodMiss = 0;
 }, 15000);
-ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
+ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0, notice = false }) => {
     $('playing').classList.add('hidden');
     const p = playing; playing = null;
     // free the streaming slot the INSTANT the player closes (Live TV close-free parity);
     // an episode switch re-claims via /player/resume seconds later, same IP = same slot
-    if (p && S.subKey) j(`${SERVICE}/player/beat?k=${S.subKey}&stop=1`);
+    if (p && S.subKey) j(`${SERVICE}/player/beat?k=${S.subKey}&stop=1&d=${ckDev()}`);
     if (p?.placeholder) {
         // the waiting clip counts for NOTHING — no progress beacon, no watched, no autonext
         // (sitting out the 5-min loop was marking the EPISODE watched + advancing CW).
@@ -1948,6 +2000,8 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0 }) => {
         else phPollTok++;
         return;
     }
+    if (notice) return;   // a 302-served notice clip counts for NOTHING — no progress beacon,
+                          // no watched, no CW stamp, no autoplay-next (Oct 22, TV-app parity)
     if (!p || !dur || pos < 0.5) { if (p && next) advanceNext(p); return; }   // 0.5s floor (AJ Sep 13, was 5s)
     const posMs = Math.floor(pos * 1000), durMs = Math.floor(dur * 1000);
     // one beacon per sit-down — powers For You + cross-device resume (same as TV app);

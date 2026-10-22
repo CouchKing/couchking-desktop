@@ -60,6 +60,7 @@
         const posAtExit = st ? st.offset + (v?.currentTime || 0) : 0;
         clearInterval(st?.tick);
         clearTimeout(st?.fbTimer);
+        clearTimeout(st?.noticeT);
         // DESTROY the streaming engine, don't just pause the <video> (AJ Sep 18: a closed web/
         // desktop player kept pulling segments = kept its Live TV device slot held). hls.js /
         // mpegts.js keep fetching after a bare pause; destroy() closes the connections so the
@@ -71,7 +72,8 @@
         document.body.style.overflow = '';
         if (fireExit && st) {
             engine = null;
-            exitCb && exitCb({ pos: posAtExit, dur: st.dur || 0, lastCue: st.lastCue || 0, ...(extra || {}) });
+            // notice rides the exit so app.js never reports progress/watched for a message clip
+            exitCb && exitCb({ pos: posAtExit, dur: st.dur || 0, lastCue: st.lastCue || 0, notice: !!st.notice, ...(extra || {}) });
         }
     }
 
@@ -93,7 +95,11 @@
             const u = b64u(url);
             state = { offset: localFile ? 0 : startSec, dur: probeDur || 0, u, SVC, step: seekStep || 10,
                       cues: [], lastCue: 0, introHandled: false, recapHandled: false, nextShown: false, speed: 1,
-                      started: false, fbTimer: null };
+                      started: false, fbTimer: null,
+                      // server NOTICE/WAITING clip handling (Oct 22): notice = the stream URL is
+                      // 302-serving a short message clip right now; resumeSec = where the viewer
+                      // actually wanted to be, so the real file rejoins there when it appears
+                      notice: false, noticeT: 0, resumeSec: startSec };
             player = document.createElement('div');
             player.id = 'web-player';
             player.innerHTML = `
@@ -410,7 +416,7 @@
             if (!state.dur && !localFile)
                 httpText(`${SVC}/webplay/probe?u=${u}`).then(t => {
                     const d = JSON.parse(t || '{}');
-                    if (state) { state.dur = d.duration || 0; paint(); }
+                    if (state) { state.dur = d.duration || 0; paint(); maybeNotice(); }
                     // embedded ENGLISH tracks (full + SDH; forced skipped) go on TOP of
                     // the subtitle menu — cut for this exact release, best sync we have.
                     // An automatic pick upgrades to the full embedded track; a choice
@@ -516,6 +522,62 @@
                 player.querySelector('.wpn-play').onclick = fireNext;
                 player.querySelector('.wpn-dismiss').onclick = () => nextCard.classList.add('hidden');
             }
+            // ---- server NOTICE clips (Oct 22, parity w/ the TV app): the stream URL can 302
+            // to a short message clip instead of the episode — ck-toomany (~24s device limit),
+            // ck-notreleased (20s), ck-unaired / ck-nostream, or the "getting ready" loop
+            // (~30s / ~5min signature). DURATION is the tell: no real episode/movie is ever
+            // 3–90s or 295–305s. Treat it LIVE-style: seek bar + times hidden, NOTHING counts
+            // (no progress, no watched, no next-up, no auto-advance), the clip loops on end,
+            // and a 20s HEAD probe of the ORIGINAL stream URL hot-swaps the real file in at
+            // the viewer's intended resume point the moment the 302 stops pointing at a notice.
+            const NOTICE_RX = /_downloading|ck-toomany|ck-notreleased|ck-unaired|ck-nostream/;
+            const noticeChrome = (on) => {
+                for (const sel of ['.wp-bar', '.wp-times', '.wp-ends'])
+                    { const el = player.querySelector(sel); if (el) el.style.display = on ? 'none' : ''; }
+                if (on) nextCard.classList.add('hidden');
+            };
+            function maybeNotice() {
+                if (!state || state.notice || localFile || !sid) return;
+                const d = state.dur;
+                if (!((d >= 3 && d <= 90) || (d >= 295 && d <= 305))) return;
+                state.notice = true;
+                state.nextShown = true;             // UP NEXT must never pop over a notice
+                noticeChrome(true);
+                // a resume point deeper than the clip = ffmpeg opens past EOF = black screen
+                if (state.offset >= d - 1) seekTo(0);
+                armNoticeProbe();
+            }
+            function armNoticeProbe() {
+                if (!state) return;
+                clearTimeout(state.noticeT);
+                state.noticeT = setTimeout(async () => {
+                    if (!state || !state.notice) return;
+                    let fin = '';
+                    try {
+                        if (DESK && window.ck.http) {   // main process follows redirects CORS-free
+                            const r = await window.ck.http({ url, method: 'HEAD', timeoutMs: 18000 });
+                            fin = (r && r.url) || '';
+                        } else {
+                            const r = await fetch(url, { method: 'HEAD' });
+                            fin = r.url || '';
+                        }
+                    } catch (e) {}   // cross-origin final hop (real CDN file, no CORS) = not a notice
+                    if (!state || !state.notice) return;
+                    if (fin && NOTICE_RX.test(fin)) { armNoticeProbe(); return; }   // still blocked — keep waiting
+                    // the URL serves the real stream now — restore the chrome and rejoin where
+                    // the viewer meant to be; if it's somehow STILL short, the re-probe re-flags
+                    state.notice = false;
+                    state.nextShown = false;
+                    noticeChrome(false);
+                    state.dur = 0;
+                    httpText(`${SVC}/webplay/probe?u=${u}`).then(t => {
+                        const d2 = JSON.parse(t || '{}');
+                        if (state) { state.dur = d2.duration || 0; paint(); maybeNotice(); }
+                    }).catch(() => {});
+                    seekTo(state.resumeSec || 0);
+                    v.play().catch(() => {});
+                }, 20000);
+            }
             // PiP + OS media controls (AJ Sep 28): 10s-back / 10s-forward / Next-episode buttons in
             // the Picture-in-Picture window + OS media UI via the Media Session API.
             if ('mediaSession' in navigator) {
@@ -567,7 +629,7 @@
                         : (creditsMs > 0 ? Math.min(240, Math.max(20, (creditsMs + 5000) / 1000)) : -1);
                     const lead = sig >= 0 ? sig + 10 : 60;
                     const remReal = state.dur - cur();
-                    if (hasNext && !state.nextShown && remReal > 0 && remReal <= Math.min(lead, 180)) {
+                    if (hasNext && !state.nextShown && !state.notice && remReal > 0 && remReal <= Math.min(lead, 180)) {
                         state.nextShown = true;
                         nextCard.classList.remove('hidden');
                     }
@@ -617,9 +679,19 @@
             v.addEventListener('timeupdate', () => {
                 if (state && !state.started && v.currentTime > 0.3) { state.started = true; clearTimeout(state.fbTimer); }
                 if (state && v.currentTime > 10) { state.endedRetries = 0; state.errRetries = 0; }
-                paint(); paintCue(); posCb && posCb({ pos: cur(), dur: state?.dur || 0 });
+                paint(); paintCue(); posCb && posCb({ pos: cur(), dur: state?.dur || 0, notice: !!state?.notice });
             });
             v.addEventListener('ended', () => {
+                // NOTICE / waiting clip (Oct 22, + the original Oct 16 ~30s/~300s "getting
+                // ready" signature): LOOP forever, live-style — a server message clip ending
+                // must never mark watched, advance, or close the player. The 20s URL probe
+                // (armNoticeProbe) is what eventually swaps the real stream in.
+                if (!localFile && state && (state.notice
+                        || (state.dur >= 295 && state.dur <= 305) || (state.dur >= 29 && state.dur <= 31))) {
+                    if (state.offset > 0) seekTo(0);             // opened mid-clip — restart it clean
+                    else { v.currentTime = 0; v.play().catch(() => {}); }
+                    return;
+                }
                 // the remux stream has no known duration, so ANY server-side close reads as
                 // 'ended' — a killed/crashed transcode mid-episode auto-advanced and even
                 // chain-skipped episodes (AJ Oct 4 "skips 2 episodes"). Advance ONLY on a
@@ -630,12 +702,6 @@
                 if (!localFile && state && !(state.dur > 0 && cur() >= state.dur - 45)) {
                     state.endedRetries = (state.endedRetries || 0) + 1;
                     if (state.endedRetries <= 4) { seekTo(cur()); return; }
-                }
-                // waiting-clip signature duration (~30s/~300s "getting ready" card): LOOP,
-                // never "finish" — ending it marked episodes watched / advanced while the
-                // real file was still caching (AJ Oct 16, 5-minute cutoff on other clients)
-                if (!localFile && state && ((state.dur >= 295 && state.dur <= 305) || (state.dur >= 29 && state.dur <= 31))) {
-                    seekTo(0); v.play().catch(() => {}); return;
                 }
                 // finished for real: autoplay-next rides the exit (app decides via watched
                 // rules); flag it so a finished episode advances even at odd durations
@@ -755,6 +821,7 @@
 
             document.body.appendChild(player);
             document.body.style.overflow = 'hidden';
+            maybeNotice();   // desktop pre-probed (probeDur rode in) — catch a notice-length file NOW
             return { ok: true, engine: 'web' };
     }
 
@@ -773,7 +840,8 @@
                     body: body ? JSON.stringify(body) : undefined
                 });
                 clearTimeout(t);
-                return { ok: r.ok, status: r.status, text: await r.text() };
+                // url = the FINAL post-redirect URL (notice-clip probe reads it; main.js matches)
+                return { ok: r.ok, status: r.status, url: r.url || '', text: await r.text() };
             } catch (e) { return { ok: false, status: 0, text: String(e).slice(0, 200) }; }
         },
         play: (o) => webPlay(o),
