@@ -143,6 +143,7 @@ async function bootstrap() {
     lastSyncSig = syncSig();
     show('main'); home();
     livetvDetect();
+    landingNav();   // open on the user's chosen tab (Home / Live TV / Library)
 }
 
 // LIVE TV exists only when the installed addon's manifest carries a type:'tv' catalog —
@@ -673,6 +674,13 @@ function show(which) {
     $('shell').classList.toggle('hidden', which === 'auth');
     if (which !== 'auth') nav('home');
 }
+// which tab the app opens on (Settings → "Open app on"). Live TV only honored once the
+// addon's tv catalog is detected — otherwise fall back to Home (same as the Android app).
+function landingNav() {
+    const land = PREF('landingtab', 'home');
+    if (land === 'livetv' && !S.liveCat) { setTimeout(() => { if (S.liveCat) nav('livetv'); }, 1500); return; }
+    if (land && land !== 'home') nav(land);
+}
 
 // ---------- posters / rows ----------
 const IMG = (p, w = 342) => p ? (p.startsWith('http') ? p : `https://image.tmdb.org/t/p/w${w}${p}`) : '';
@@ -907,10 +915,16 @@ async function newEpisodeCount(titleId) {
         return (newEpCache[titleId] = nA);
     }
     const last = watched[watched.length - 1];
-    // deep back-catalog binges: "+9" means nothing when nothing new actually aired
+    // deep back-catalog binges: don't flash the whole "+9" backlog — but a genuinely-new
+    // drop (aired in the last ~2 weeks) SHOULD still pop a +1 and move the show to front
+    // even many seasons behind (AJ Oct 23, Grey's at S12 while S23 airs). Far behind =
+    // count only recently-aired fresh eps; caught-up = unchanged.
     const maxSeason = Math.max(0, ...eps.filter(aired).map(e => e.season));
-    if (last.season < maxSeason - 1) return (newEpCache[titleId] = 0);
-    const fresh = eps.filter(e => aired(e) && key(e) > key(last));
+    const freshAll = eps.filter(e => aired(e) && key(e) > key(last));
+    const recentCut = Date.now() - 14 * 86400000;
+    const fresh = last.season < maxSeason - 1
+        ? freshAll.filter(e => (+new Date(e.released || 0) || 0) > recentCut)
+        : freshAll;
     const n = Math.min(9, fresh.length);
     // the air date acts like a "touch": the show sorts as if it was watched the moment
     // the new episode dropped — front of CW that day, then normal recency order takes
@@ -2362,13 +2376,22 @@ function library() {
         else if (libSort === 'Watched') list = list.filter(t => watched.has(t.id));
         else if (libSort === 'Unwatched') list = list.filter(t => !watched.has(t.id));
         // Recent = natural order (most-recent adds first)
+        // "Hide watched titles" (Settings) — drop fully-watched movies and caught-up shows
+        // from the grid. Movies = marked watched; shows = at least one episode watched AND
+        // no new/unwatched episodes left (counts==0, only known after the async re-paint).
+        const hideWatched = PREF('hidewatched', false);
+        const epWatched = (id) => (st.watchedIds || []).some(k => String(k).startsWith(id + ':'));
+        const isFullyWatched = (t, counts) => t.type === 'series'
+            ? (!!counts && epWatched(t.id) && (counts[t.id] || 0) === 0)
+            : watched.has(t.id);
         const paint = (counts) => {
             gridHolder.innerHTML = '';
             let shown = list;
+            if (hideWatched) shown = shown.filter(t => !isFullyWatched(t, counts));
             if (libSort === 'New episodes' && counts) {
                 // a real FILTER: only shows that actually have unwatched new episodes,
                 // most new first — not the whole library re-sorted
-                shown = list.filter(t => (counts[t.id] || 0) > 0).sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0));
+                shown = shown.filter(t => (counts[t.id] || 0) > 0).sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0));
                 if (!shown.length) {
                     gridHolder.innerHTML = '<p class="muted" style="padding-top:1rem">No new episodes right now — shows you track will appear here when new episodes air.</p>';
                     return;
@@ -2570,7 +2593,21 @@ function setRating(id, v) {
 // local key ↔ account prefs key (the tvstate prefs blob every device shares)
 const PREF_MAP = { autonext: 'autoplayNext', subscale: 'subScale', blur: 'blurUnwatched', titles: 'showTitles',
                    seek: 'seekStep', sublang: 'subLang', audlang: 'audioLang', subbg: 'subBg',
-                   suboutline: 'subOutline', subpos: 'subPos' };
+                   suboutline: 'subOutline', subpos: 'subPos',
+                   // per-profile accent color (AJ Oct 23 parity) — rides the same synced prefs
+                   // blob, so changing it on any device follows you to every device
+                   accent: 'accentColor', accentname: 'accentName',
+                   // hide fully-watched titles from the library grid; which tab the app
+                   // opens on; new-episode push toggle (server gates PHONE push on this
+                   // synced pref — flipping it here reaches the user's phone) — all synced
+                   hidewatched: 'hideWatched', landingtab: 'landingTab', notifnew: 'notifNewEps' };
+// the 8 accent choices, identical to the Android app
+const ACCENTS = [['Royal (default)', '#7B5BF5'], ['Gold', '#E0A400'], ['Ocean', '#2E86F5'],
+                 ['Crimson', '#E23B4E'], ['Emerald', '#1DB954'], ['Pink', '#E754A6'],
+                 ['Sunset', '#F0702A'], ['Teal', '#18B8A8']];
+function applyAccent() {
+    document.documentElement.style.setProperty('--accent', PREF('accent', '') || '#7B5BF5');
+}
 const PREF = (k, d) => JSON.parse(localStorage.getItem('ckp-' + k) ?? JSON.stringify(d));
 const SETPREF = (k, v) => {
     localStorage.setItem('ckp-' + k, JSON.stringify(v));
@@ -2586,6 +2623,28 @@ function applyAccountPrefs() {
     if (!pr) return;
     for (const [loc, acc] of Object.entries(PREF_MAP))
         if (pr[acc] !== undefined) localStorage.setItem('ckp-' + loc, JSON.stringify(pr[acc]));
+    applyAccent();   // repaint the theme whenever prefs land (load, profile switch, cross-device sync)
+}
+function accentPicker() {
+    document.getElementById('accent-ov')?.remove();
+    const ov = document.createElement('div'); ov.id = 'accent-ov';
+    ov.style.cssText = 'position:fixed;inset:0;background:#000A;display:flex;align-items:center;justify-content:center;z-index:60';
+    const card = document.createElement('div'); card.className = 'prof-card';
+    card.innerHTML = '<h3>Accent color</h3>';
+    const grid = document.createElement('div');
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:.7rem;margin-top:.6rem';
+    for (const [name, hex] of ACCENTS) {
+        const sel = (PREF('accentname', '') || 'Royal (default)') === name;
+        const b = document.createElement('button'); b.className = 'ghost';
+        b.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:.3rem;padding:.5rem;background:none';
+        b.innerHTML = `<span style="width:34px;height:34px;border-radius:50%;background:${hex};border:3px solid ${sel ? '#fff' : 'transparent'}"></span>` +
+                      `<span style="font-size:.7rem">${name.replace(' (default)', '')}</span>`;
+        b.onclick = () => { SETPREF('accent', hex); SETPREF('accentname', name); applyAccent(); ov.remove(); renderSettings(); };
+        grid.appendChild(b);
+    }
+    card.appendChild(grid);
+    ov.appendChild(card); ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    document.body.appendChild(ov);
 }
 // one settings row: label left, value right — the app's settingRow2
 function settingRow(label, value, onClick) {
@@ -2628,17 +2687,40 @@ function renderSettings() {
             localStorage.removeItem('ck'); location.reload();
         }));
     }
-    body.appendChild(sectionText('SETTINGS'));
     const st = pstate();
+    // grouped like the Android app's settings screen, not one flat list
+    body.appendChild(sectionText('APPEARANCE'));
+    body.appendChild(settingRow('Accent color', PREF('accentname', '') || 'Royal (default)', () => accentPicker()));
+    body.appendChild(settingRow('Show titles under posters', PREF('titles', true) ? 'On' : 'Off',
+        () => { SETPREF('titles', !PREF('titles', true)); renderSettings(); }));
+    body.appendChild(settingRow('Blur unwatched episode images', PREF('blur', false) ? 'On' : 'Off',
+        () => { SETPREF('blur', !PREF('blur', false)); renderSettings(); }));
+
+    body.appendChild(sectionText('HOME & LIBRARY'));
     const shelves = (st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES;
     body.appendChild(settingRow('Shelves', `${shelves.length} shelves`, () => shelfPicker()));
     body.appendChild(settingRow('Reorder shelves', 'Set the order they show on Home', () => shelfReorder()));
-    body.appendChild(settingRow('Blur unwatched episode images', PREF('blur', false) ? 'On' : 'Off',
-        () => { SETPREF('blur', !PREF('blur', false)); renderSettings(); }));
-    body.appendChild(settingRow('Show titles under posters', PREF('titles', true) ? 'On' : 'Off',
-        () => { SETPREF('titles', !PREF('titles', true)); renderSettings(); }));
+    body.appendChild(settingRow('Hide watched titles', PREF('hidewatched', false) ? 'On' : 'Off',
+        () => { SETPREF('hidewatched', !PREF('hidewatched', false)); renderSettings(); }));
+    // cycles Home → Live TV → Library; stored as the nav key
+    const LANDING = [['home', 'Home'], ['livetv', 'Live TV'], ['library', 'Library']];
+    const curLand = LANDING.find(x => x[0] === PREF('landingtab', 'home')) || LANDING[0];
+    body.appendChild(settingRow('Open app on', curLand[1], () => {
+        const next = LANDING[(LANDING.indexOf(curLand) + 1) % LANDING.length];
+        SETPREF('landingtab', next[0]); renderSettings();
+    }));
+
+    body.appendChild(sectionText('NOTIFICATIONS'));
+    body.appendChild(settingRow('New episode notifications', PREF('notifnew', true) ? 'On' : 'Off',
+        () => { SETPREF('notifnew', !PREF('notifnew', true)); renderSettings(); }));
+
     // Player settings only exist when there's something to PLAY
-    if (hasService()) body.appendChild(settingRow('Player', '', () => playerSettings()));
+    if (hasService()) {
+        body.appendChild(sectionText('PLAYBACK'));
+        body.appendChild(settingRow('Player', '', () => playerSettings()));
+    }
+
+    body.appendChild(sectionText('MORE'));
     body.appendChild(settingRow('Addons',
         S.guest ? 'sign in to add' : `${S.addons.length} added`, () => addonsPage()));
     body.appendChild(settingRow('Legal & About', '', () => aboutPage()));
