@@ -1605,6 +1605,7 @@ function playEpisodeStream(s, meta, ep, sid, label) {
         pushContinueLocal({ id: meta.id, type: 'series', name: meta.name, poster: meta.poster || '' });
         const st = pstate();
         st.cwlast = { ...(st.cwlast || {}), [meta.id]: sid };
+        st.cwlastts = { ...(st.cwlastts || {}), [meta.id]: Date.now() };   // pointer recency (Nov 3, parity w/ TV 2.0.245)
         pushAccount();
     }
     play(s.url, label, sid, s.subtitles || null, { ph: /^⏳/.test(s.name || '') });
@@ -1968,7 +1969,10 @@ ckOnPos(({ pos, dur, notice }) => {
         const st = pstate();
         st.positions = st.positions || {};
         st.positions[playing.sid] = `${Math.max(Math.round(pos * 1000), 500)}|${Math.round(dur * 1000)}|${Date.now()}`;
-        if (playing.s) st.cwlast = { ...(st.cwlast || {}), [playing.imdb]: playing.sid };
+        if (playing.s) {
+            st.cwlast = { ...(st.cwlast || {}), [playing.imdb]: playing.sid };
+            st.cwlastts = { ...(st.cwlastts || {}), [playing.imdb]: Date.now() };   // pointer recency (Nov 3)
+        }
         Promise.resolve(pushAccount()).catch(() => {});
     }
 });
@@ -2042,7 +2046,10 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0, notice = fal
         // write, so every device's Continue row and resume % agree with this one
         st.positions = st.positions || {};
         st.positions[p.sid] = `${posMs}|${durMs}|${Date.now()}`;
-        if (p.s) st.cwlast = { ...(st.cwlast || {}), [p.imdb]: p.sid };
+        if (p.s) {
+            st.cwlast = { ...(st.cwlast || {}), [p.imdb]: p.sid };
+            st.cwlastts = { ...(st.cwlastts || {}), [p.imdb]: Date.now() };   // pointer recency (Nov 3)
+        }
         if (watchedNow) {
             if (p.s) {   // episode → checkmark (blur-clear + eye sync to every device)
                 st.watchedIds = st.watchedIds || [];
@@ -2055,12 +2062,17 @@ ckOnExit(async ({ pos, dur, next = false, credits = 0, lastCue = 0, notice = fal
                         .sort((a, b) => a.season - b.season || a.episode - b.episode);
                     const idx = eps.findIndex(x => `${p.imdb}:${x.season}:${x.episode}` === p.sid);
                     const after = idx >= 0 ? eps.slice(idx + 1) : [];
+                    // RE-WATCH (Nov 3, parity with TV): a LATER episode already watched means they
+                    // went BACK and are re-watching — advance SEQUENTIALLY (next aired ep, watched
+                    // or not), never leapfrog to the first unwatched one seasons ahead.
+                    const wentBack = after.some(x => st.watchedIds.includes(`${p.imdb}:${x.season}:${x.episode}`));
                     const nextAired = after.find(x => (!x.released || new Date(x.released) <= new Date()) &&
-                        !st.watchedIds.includes(`${p.imdb}:${x.season}:${x.episode}`));
+                        (wentBack || !st.watchedIds.includes(`${p.imdb}:${x.season}:${x.episode}`)));
                     if (nextAired) st.cwlast[p.imdb] = `${p.imdb}:${nextAired.season}:${nextAired.episode}`;   // resume next aired, blank bar
                     else if (after.length === 0) st.watchedTitles = [{ id: p.imdb, type: 'series', name: cur.meta.name || p.label, poster: cur.meta.poster || '' },
                         ...(st.watchedTitles || []).filter(x => x.id !== p.imdb)].slice(0, 60);   // finished the LAST episode → whole series watched
                     else st.cwlast[p.imdb] = `${p.imdb}:${after[0].season}:${after[0].episode}`;   // caught up but an upcoming episode is pending → point at it, don't mark watched
+                    if (st.cwlast[p.imdb] !== p.sid) st.cwlastts = { ...(st.cwlastts || {}), [p.imdb]: Date.now() };   // the advance is a fresh choice
                 }
             } else {     // a FINISHED movie leaves Continue Watching (real finish only)
                 st.watchedIds = st.watchedIds || [];

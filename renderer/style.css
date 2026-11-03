@@ -62,7 +62,20 @@ select:focus, select:hover { border-color:var(--accent); }
 /* overflow-x:auto forces the cross-axis to clip too, so a hover-scaled poster (and its
    outline/shadow) got cut off by the strip's invisible edge — pad enough on all sides that
    the enlarged tile stays inside the scroll padding box and isn't clipped (AJ Sep 27). */
-.strip { display:flex; gap:.75rem; overflow-x:auto; padding:.7rem .6rem 1rem; scrollbar-width:thin; }
+.strip { display:flex; gap:.75rem; overflow-x:auto; padding:.7rem .6rem 1rem; scrollbar-width:none; }
+
+/* WINDOWS SCROLLBARS (AJ Nov 3 "scroll bars everywhere"): Windows paints a chunky gray bar
+   under EVERY poster row / chip strip / side panel (macOS overlays them invisibly). Hide them
+   on all inner scrollers (wheel/drag still scrolls); the main page keeps ONE slim dark bar. */
+.strip::-webkit-scrollbar, .lvcw-row::-webkit-scrollbar, .lvb-row::-webkit-scrollbar,
+.epg-scroll::-webkit-scrollbar, .lv-guidepanel::-webkit-scrollbar,
+#web-player .wp-menu::-webkit-scrollbar { width:0; height:0; display:none; }
+.lvcw-row, .lvb-row, .epg-scroll, .lv-guidepanel, #web-player .wp-menu { scrollbar-width:none; }
+#content { scrollbar-width:thin; scrollbar-color:#3a3650 transparent; }
+#content::-webkit-scrollbar { width:8px; }
+#content::-webkit-scrollbar-track { background:transparent; }
+#content::-webkit-scrollbar-thumb { background:#3a3650; border-radius:4px; }
+#content::-webkit-scrollbar-thumb:hover { background:#55517a; }
 
 /* ---- poster cards: EXACT Firestick tile — white progress bar on a dark track flush at
        the poster's bottom edge, single-line centered title below ---- */
