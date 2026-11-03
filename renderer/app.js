@@ -74,6 +74,26 @@ async function auth(mode) {
     localStorage.setItem('ck', JSON.stringify({ email: S.email, token: S.token }));
     await bootstrap();
 }
+// Forgot password (Nov 3, parity w/ Android/iOS/web): email → 6-digit code (15 min) →
+// new password. /tvapp/reset returns a fresh token, so success = signed straight in.
+async function forgotPassword() {
+    $('auth-error').textContent = '';
+    const email = ($('auth-email').value.trim() || prompt('Your account email:') || '').trim().toLowerCase();
+    if (!email) return;
+    $('auth-email').value = email;
+    const rq = await j(`${SERVICE}/tvapp/reset-request`, { method: 'POST', body: { email } });
+    if (rq?.ok === false) { $('auth-error').textContent = rq.error || 'Couldn’t send the code'; return; }
+    const code = (prompt('We emailed you a 6-digit code (check spam too). Enter it:') || '').trim();
+    if (!code) return;
+    const password = prompt('New password (4+ characters):') || '';
+    if (password.length < 4) { $('auth-error').textContent = 'Password needs 4+ characters'; return; }
+    const r = await j(`${SERVICE}/tvapp/reset`, { method: 'POST', body: { email, code, password } });
+    if (!r?.ok) { $('auth-error').textContent = r?.error || 'Wrong or expired code — try again'; return; }
+    S.email = email; S.token = r.token; S.guest = false;
+    localStorage.setItem('ck', JSON.stringify({ email: S.email, token: S.token }));
+    await bootstrap();
+}
+
 function guest() {
     S.guest = true; S.email = ''; S.token = ''; S.state = {}; S.addons = []; S.user = 'Guest'; S.useg = '';
     $('prof-name').textContent = 'Guest'; $('prof-avatar').textContent = '👤';
@@ -1641,7 +1661,37 @@ function streamEl(st) {
             `<span class="chip chip-${c.toLowerCase().replace(/[^a-z0-9]/g, '')}">${c}</span>`).join('')}</div>
         <div class="stream-title">${lines[0] || ''}</div>
         ${lines[1] ? `<div class="stream-note">${lines[1]}</div>` : ''}`;
+    // CLICK-AND-HOLD / right-click → Report Stream Bad (Nov 3, parity with web/TV/iOS):
+    // flag a specific copy; AJ gets a one-tap ☠️ ban button for THAT exact copy.
+    if (!st.ckNotice) {
+        const hash = (String(st.url || '').match(/\/tbplay\/[^/]+\/([0-9a-fA-F]{32,40})/) || [])[1] || '';
+        if (hash) {
+            let lpT = 0;
+            const cancel = () => clearTimeout(lpT);
+            el.addEventListener('pointerdown', () => { lpT = setTimeout(() => { el._lpFired = true; reportStreamBad(hash, st); }, 600); });
+            el.addEventListener('pointerup', cancel);
+            el.addEventListener('pointerleave', cancel);
+            el.addEventListener('pointercancel', cancel);
+            el.addEventListener('click', (e) => { if (el._lpFired) { e.stopImmediatePropagation(); e.preventDefault(); el._lpFired = false; } }, true);
+            el.addEventListener('contextmenu', (e) => { e.preventDefault(); reportStreamBad(hash, st); });
+        }
+    }
     return el;
+}
+// Report a specific copy as bad → server attaches a one-tap ban button to AJ's report feed.
+async function reportStreamBad(hash, st) {
+    const nm = String(st?.title || st?.name || 'this stream').split('\n')[0].slice(0, 80);
+    if (!(await ckAsk('Report this stream?', `Tell AJ this copy is bad so it can be blocked:\n\n${nm}`, 'Report bad', false))) return;
+    try {
+        await j(`${SERVICE}/tvapp/report`, { method: 'POST', body: {
+            text: 'Bad stream reported by long-press in the stream list.',
+            hash, stitle: nm,
+            key: S.subKey || '', u: S.useg || S.user || '',
+            v: 'desktop', model: (navigator.userAgent || '').slice(0, 60),
+            ctx: ((cur?.meta?.name) || '') + ' — stream list',
+        } });
+        toast('Reported — thanks. AJ can block this copy now.');
+    } catch { toast("Couldn't send the report — check your connection"); }
 }
 
 async function pickStream(sid, label, autoFirst = false) {
@@ -2178,6 +2228,7 @@ $('playing-stop').onclick = () => ckStop();
 // ---------- wiring ----------
 $('auth-signin').onclick = () => auth('signin');
 $('auth-signup').onclick = () => auth('signup');
+$('auth-forgot').onclick = () => forgotPassword();
 $('auth-guest').onclick = () => guest();
 $('back').onclick = () => { nav('home'); };
 
