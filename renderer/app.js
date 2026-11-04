@@ -228,18 +228,18 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
             guideList = [];
             if (gd2.favChannels?.length) {
                 guideList.push({ hdr: '★ Favorites' });
-                for (const c of gd2.favChannels) guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c) });
+                for (const c of gd2.favChannels) guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c), logo: c.logo || '' });
             }
             const recCh = (gd2.recent || []).filter(r => !favSet.has(r)).map(r => byId.get(r)).filter(Boolean);
             if (recCh.length) {
                 guideList.push({ hdr: '↻ Continue watching' });
-                for (const c of recCh) guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c) });
+                for (const c of recCh) guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c), logo: c.logo || '' });
             }
             let lastSec = null;
             for (const c of gd2.channels) {
                 const sec = c.section || c.genre || 'More channels';
                 if (sec !== lastSec) { lastSec = sec; guideList.push({ hdr: sec }); }
-                guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c) });
+                guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c), logo: c.logo || '' });
             }
         }
         const streams = await _lvTune(id);
@@ -277,9 +277,22 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
         // watch (AJ Sep 17 "loading screen … that they are going to watch")
         const ci = (_lvGuideCache.d?.channels || []).find(c => 'cklive:' + c.id === id);
         const nowP = ci?.progs?.find(p => p.s <= Date.now() && p.e > Date.now());
+        // LAST CHANNEL seed (AJ Oct 27, parity w/ web): the most-recently-tuned channel that
+        // ISN'T the one we're opening = the "last channel" for the in-player ↩ recall button.
+        // recent[] is server-side (lvrec, key-level) so it's already synced across devices —
+        // the ↩ works even on a cold open before any in-session hop.
+        let _lastCh = '', _lastName = '', _lastLogo = '';
+        {
+            const _rec = _lvGuideCache.d?.recent || [];
+            const _bid = new Map((_lvGuideCache.d?.channels || []).map(c => [c.id, c]));
+            const _lid = _rec.find(rid => ('cklive:' + rid) !== id && _bid.get(rid));
+            if (_lid) { const _lc = _bid.get(_lid); _lastCh = 'cklive:' + _lid; _lastName = _lc.name; _lastLogo = _lc.logo || ''; }
+        }
+        try { localStorage.setItem('ck-lastlive', JSON.stringify({ id, name, logo: ci?.logo || '', ts: Date.now() })); } catch {}
         await ckPlay({ live: true, url: urls[0] || '', title: name, backups: urls.slice(1), tsUrl,
                        logo: ci?.logo || '', now: nowP?.t || '',
                        chid: id, fav: _lvIsFav(id), isFav: _lvIsFav,
+                       lastCh: _lastCh, lastName: _lastName, lastLogo: _lastLogo,
                        onFav: async (cid, on) => {
                            await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(String(cid).replace(/^cklive:/, ""))}&on=${on ? 1 : 0}&p=${encodeURIComponent(S.pid || "")}`, { method: 'POST' });
                            _lvGuideCache.at = 0;
@@ -904,20 +917,43 @@ async function forYouRow(kind) {
 // ---------- new-episode badges (synced through newEpsSeen, key = season*10000+episode) ----------
 const newEpCache = {};
 const newEpAirCache = {};   // titleId -> newest unwatched ep's air timestamp (drives CW order)
+// FIRST-PAINT ORDER (TV 2.0.258 parity): the air-time boosts persist per profile, so a
+// fresh app launch sorts Continue Watching into its FINAL order on the very first paint —
+// before the async newEpisodeCount pass lands — instead of painting watch-stamp order
+// and reshuffling a second later.
+const _cwBoostKey = () => 'ckCwBoost:' + (S.pid || '');
+let _cwBoostPid = null;
+function loadCwBoosts() {
+    if (_cwBoostPid === _cwBoostKey()) return;
+    _cwBoostPid = _cwBoostKey();
+    try {
+        for (const [k, ts] of Object.entries(JSON.parse(localStorage.getItem(_cwBoostKey()) || '{}')))
+            if (!(k in newEpAirCache)) newEpAirCache[k] = +ts || 0;
+    } catch {}
+}
+function saveCwBoosts() {
+    try {
+        const out = {};
+        for (const [k, ts] of Object.entries(newEpAirCache)) if (ts > 0) out[k] = ts;
+        localStorage.setItem(_cwBoostKey(), JSON.stringify(out));
+    } catch {}
+}
 async function newEpisodeCount(titleId) {
     if (titleId in newEpCache) return newEpCache[titleId];
     const st = pstate();
     const meta = (await j(`${CINE}/meta/series/${titleId}.json`))?.meta;
     const eps = (meta?.videos || []).filter(v => v.season > 0)
         .sort((a, b) => a.season - b.season || a.episode - b.episode);
-    if (!eps.length) return (newEpCache[titleId] = 0);
+    if (!eps.length) { newEpAirCache[titleId] = 0; return (newEpCache[titleId] = 0); }
     const aired = (e) => !e.released || new Date(e.released) <= new Date();
     const key = (e) => e.season * 10000 + e.episode;
     const latestAiredKey = Math.max(0, ...eps.filter(aired).map(key));
-    // opening the show dismissed the badge (on ANY device — merged by max) until
-    // something genuinely newer airs
-    if (latestAiredKey > 0 && ((st.newEpsSeen || {})[titleId] || 0) >= latestAiredKey)
-        return (newEpCache[titleId] = 0);
+    // opening the show clears the +N NUMBER only (TV 2.0.258, on ANY device — merged by
+    // max) until something genuinely newer airs. The air-time ORDER boost below is
+    // computed regardless and only dies when the new episodes are actually WATCHED —
+    // dismissing the badge used to sink the show in the row, which broke cross-device
+    // order parity with the TV app.
+    const dismissed = latestAiredKey > 0 && ((st.newEpsSeen || {})[titleId] || 0) >= latestAiredKey;
     const pos = st.positions || {};
     const watchedIds = new Set(st.watchedIds || []);
     const watched = eps.filter(e => {
@@ -928,11 +964,11 @@ async function newEpisodeCount(titleId) {
         // never-watched but in the library (AJ Sep 14: "anything in there, watched or
         // not") — badge counts episodes aired AFTER the show was added, same as the TV app
         const addedAt = +((st.addedTs || {})[titleId] || 0);
-        if (!addedAt) return (newEpCache[titleId] = 0);
+        if (!addedAt) { newEpAirCache[titleId] = 0; return (newEpCache[titleId] = 0); }
         const freshAdd = eps.filter(e => aired(e) && e.released && +new Date(e.released) > addedAt);
         const nA = Math.min(9, freshAdd.length);
         newEpAirCache[titleId] = nA ? Math.max(...freshAdd.map(e => +new Date(e.released))) : 0;
-        return (newEpCache[titleId] = nA);
+        return (newEpCache[titleId] = dismissed ? 0 : nA);
     }
     const last = watched[watched.length - 1];
     // deep back-catalog binges: don't flash the whole "+9" backlog — but a genuinely-new
@@ -950,10 +986,12 @@ async function newEpisodeCount(titleId) {
     // the new episode dropped — front of CW that day, then normal recency order takes
     // over as other things get watched (AJ Sep 14: badge shows must FOLLOW order, not pin)
     newEpAirCache[titleId] = n ? Math.max(0, ...fresh.map(e => +new Date(e.released || 0) || 0)) : 0;
-    return (newEpCache[titleId] = n);
+    return (newEpCache[titleId] = dismissed ? 0 : n);
 }
-// opening a show's page clears its badge — record the latest aired key as seen (merged
-// by MAX across devices, exactly like the Firestick)
+// opening a show's page clears its badge NUMBER — record the latest aired key as seen
+// (merged by MAX across devices, exactly like the Firestick). The air-time order boost
+// (newEpAirCache) is deliberately NOT touched: the show keeps its CW position until the
+// new episodes are actually watched (TV 2.0.258)
 function dismissNewEpsBadge(titleId, meta) {
     if (S.guest || meta?.type !== 'series') return;
     const eps = (meta.videos || []).filter(v => v.season > 0 && (!v.released || new Date(v.released) <= new Date()));
@@ -1037,28 +1075,33 @@ function paintContinueRow() {
     cwHolderEl.innerHTML = '';
     const cont = st.continue || [];
     if (!cont.length || !hasService()) return;
-    // CW order = newest of (your last watch, a badge'd show's new-episode air date).
+    // CW order = newest of (your last watch, a new-episode air date).
     // A new episode bumps its show to the front THAT DAY like a touch — but anything you
     // actually watch after that outranks it, so the row keeps following real order
     // (AJ Sep 14: v1 pinned badge shows in front — "The President" sat above a
-    // just-started Lanterns; air date as a stamp fixes exactly that)
+    // just-started Lanterns; air date as a stamp fixes exactly that).
+    // TV 2.0.258 parity: the boost is NOT gated on the badge — dismissing the +N by
+    // opening the show keeps the position until the new episodes are actually watched.
+    loadCwBoosts();   // persisted boosts = final order on the FIRST paint, not the second
     const stampOf = (t) => {
         let best = 0;
         for (const [k, v] of Object.entries(st.positions || {}))
             if (k === t.id || k.startsWith(t.id + ':')) best = Math.max(best, +String(v).split('|')[2] || 0);
         return best;
     };
-    const sortKey = (t) => Math.max(stampOf(t), (newEpCache[t.id] || 0) > 0 ? (newEpAirCache[t.id] || 0) : 0);
+    const sortKey = (t) => Math.max(stampOf(t), newEpAirCache[t.id] || 0);
     const bumped = () => [...cont].sort((a, b) => sortKey(b) - sortKey(a));
+    const rowSig = () => bumped().map(t => t.id + ':' + (newEpCache[t.id] || 0)).join('|');
+    const sig0 = rowSig();
     addRow('Continue Watching', bumped().map(t => ({ ...t })),
         (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest, newEps: newEpCache[t.id] || 0 }),
         cwHolderEl);
-    // "+N new episodes" pass — fills badges in place once the counts land
+    // "+N new episodes" pass — recomputes counts + air boosts, then repaints ONLY if the
+    // order or a badge actually changed (no flicker when nothing moved)
     (async () => {
-        let any = false;
-        for (const t of cont.filter(x => x.type === 'series'))
-            if (await newEpisodeCount(t.id) > 0) any = true;
-        if (any && cwHolderEl.isConnected) {
+        for (const t of cont.filter(x => x.type === 'series')) await newEpisodeCount(t.id);
+        saveCwBoosts();
+        if (rowSig() !== sig0 && cwHolderEl.isConnected) {
             cwHolderEl.innerHTML = '';
             addRow('Continue Watching', bumped().map(t => ({ ...t })),
                 (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest, newEps: newEpCache[t.id] || 0 }),
@@ -2522,6 +2565,9 @@ function switchProfile(p) {
     $('prof-name').textContent = p.name; paintAvatar($('prof-avatar'), p);
     applyAccountPrefs();
     for (const k of Object.keys(newEpCache)) delete newEpCache[k];
+    // boosts are per-profile too — clear, paintContinueRow reseeds from this profile's
+    // persisted set (ungated sortKey would otherwise drag the old profile's order along)
+    for (const k of Object.keys(newEpAirCache)) delete newEpAirCache[k];
     home(); if (page === 'library') library();
 }
 function profileManager() {

@@ -860,7 +860,7 @@
     // for files), no seeking, auto-failover to the channel's backup urls on fatal error.
     async function livePlay({ url, title, backups = [], guide = [], onTune = null, logo = '', now = '',
                               chid = '', fav = false, onFav = null, isFav = null, tsUrl = '',
-                              onClose = null }) {
+                              lastCh = '', lastName = '', lastLogo = '', onClose = null }) {
         closePlayer(false);
         engine = 'web';
         state = { offset: 0, dur: 0 };
@@ -878,6 +878,7 @@
                   <div class="wp-cell"><span>Play / Pause</span><button class="wp-btn wp-pp">⏸</button></div>
                   <div class="wp-cell"><span>Favorite</span><button class="wp-btn wp-fav">☆</button></div>
                   <div class="wp-cell"><span>Guide</span><button class="wp-btn wp-guide">📋</button></div>
+                  <div class="wp-cell wp-lastcell" style="display:none"><span>Last channel</span><button class="wp-btn wp-last" title="Last channel">↩</button></div>
                   <div class="wp-cell"><span>Volume</span><input class="wp-vol" type="range" min="0" max="1" step=".05" value="1"></div>
                   <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">⛶</button></div>
                 </div>
@@ -888,6 +889,13 @@
         document.body.appendChild(player);
         document.body.style.overflow = 'hidden';
         const v = player.querySelector('video');
+        // LIVE = NO captions, ever (TV 2.0.258 parity): broadcast feeds carry embedded
+        // CEA-608/708 + WebVTT tracks that native HLS (and hls.js) can auto-show from
+        // system caption prefs — force every text track off, including tracks added
+        // later by engine swaps / channel hops. VOD subtitles are untouched (webPlay).
+        const killCc = () => { try { for (const tt of v.textTracks) if (tt.mode !== 'disabled') tt.mode = 'disabled'; } catch {} };
+        killCc();
+        try { v.textTracks.addEventListener('addtrack', killCc); v.textTracks.addEventListener('change', killCc); } catch {}
         // TUNING SCREEN (AJ Sep 17 "2-3 seconds to load anything"): instant logo + channel
         // + what's on, up until real frames flow; a 12s watchdog walks the backup sources
         // so a dead first url self-heals instead of spinning forever.
@@ -950,8 +958,10 @@
                     c.onload = res; c.onerror = rej; document.head.appendChild(c); };
                 document.head.appendChild(sc);
             });
-            // long back buffer = pause keeps your place for a few minutes of live TV
-            const h = new window.Hls({ maxBufferLength: 30, backBufferLength: 300 });
+            // long back buffer = pause keeps your place for a few minutes of live TV.
+            // subtitle/caption parsing OFF at the engine level — live is captionless (TV 2.0.258)
+            const h = new window.Hls({ maxBufferLength: 30, backBufferLength: 300,
+                subtitleDisplay: false, enableCEA708Captions: false, enableWebVTT: false, enableIMSC1: false });
             h.on(window.Hls.Events.ERROR, (_, d) => {
                 if (d.fatal && state) {
                     if (++si < sources.length) attach(sources[si]);     // next backup
@@ -1018,18 +1028,8 @@
                     r.querySelector('.lvg-now').textContent = ch.now || '';
                     r.onclick = async () => {
                         r.classList.add('busy');
-                        try {
-                            const r2 = await onTune(ch.id);
-                            const hls = r2?.hls || (typeof r2 === 'string' && r2 ? [r2] : []);
-                            const ts2 = r2?.ts || '';
-                            if (!hls.length && !ts2) return;
-                            si = 0; sources.length = 0; hls.forEach(u2 => sources.push(u2));
-                            tsCur = ts2;
-                            player.querySelector('.wp-title').textContent = ch.name;
-                            curCh = ch.id; curFav = !!(isFav && isFav(ch.id)); paintFav();
-                            showOv(ch.name, ch.now); armDog();
-                            if (sources[0]) await attach(sources[0]); else if (ts2) await playTs(ts2);
-                        } finally { r.classList.remove('busy'); }
+                        try { await hopTo(ch.id, ch.name, ch.logo || '', ch.now); }
+                        finally { r.classList.remove('busy'); }
                     };
                     gp.appendChild(r);
                 }
@@ -1038,8 +1038,36 @@
         } else gbtn.parentElement.style.display = 'none';
         // ★ the channel you're WATCHING (AJ Sep 17) — state follows in-player channel hops
         const favB = player.querySelector('.wp-fav');
-        let curCh = chid, curFav = !!fav;
+        let curCh = chid, curFav = !!fav, curName = title, curLogo = logo;
         const paintFav = () => { favB.textContent = curFav ? '★' : '☆'; favB.style.color = curFav ? '#f5c542' : ''; };
+        // ↩ LAST CHANNEL (AJ Oct 27, parity w/ web): classic cable-box recall — one tap bounces
+        // to the previously-tuned channel. Seeded from the key's last tune (lastCh, server-synced
+        // via lvrec), so it works the instant you open — even before hopping — then tracks every hop.
+        let prevCh = (lastCh && lastCh !== chid) ? lastCh : '', prevName = lastName || '', prevLogo = lastLogo || '';
+        const lastCell = player.querySelector('.wp-lastcell'), lastBtn = player.querySelector('.wp-last');
+        const paintLast = () => { if (lastCell) lastCell.style.display = prevCh ? '' : 'none'; if (lastBtn && prevName) lastBtn.title = 'Last: ' + prevName; };
+        // shared tune-over used by BOTH the guide rows and the ↩ Last button
+        const hopTo = async (id, nm, lg, nwTxt) => {
+            const r2 = await onTune(id);
+            const hls = r2?.hls || (typeof r2 === 'string' && r2 ? [r2] : []);
+            const ts2 = r2?.ts || '';
+            if (!hls.length && !ts2) return false;
+            if (curCh && curCh !== id) { prevCh = curCh; prevName = curName; prevLogo = curLogo; }  // remember where we left
+            si = 0; sources.length = 0; hls.forEach(u2 => sources.push(u2));
+            tsCur = ts2;
+            player.querySelector('.wp-title').textContent = nm;
+            curCh = id; curName = nm; curLogo = lg || ''; curFav = !!(isFav && isFav(id));
+            paintFav(); paintLast();
+            showOv(nm, nwTxt); armDog();
+            if (sources[0]) await attach(sources[0]); else if (ts2) await playTs(ts2);
+            return true;
+        };
+        paintLast();
+        if (lastBtn) lastBtn.onclick = async () => {
+            if (!prevCh) return;
+            lastBtn.classList.add('busy');
+            try { await hopTo(prevCh, prevName, prevLogo, ''); } finally { lastBtn.classList.remove('busy'); }
+        };
         if (onFav && chid) {
             paintFav();
             favB.onclick = () => { curFav = !curFav; paintFav(); onFav(curCh, curFav); };
