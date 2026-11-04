@@ -1021,10 +1021,25 @@ function cwChip(st, t) {
     const [, s, e] = last.split(':');
     return s && e ? `S${s} · E${e}` : '';
 }
+// Sorted Continue Watching order — SHARED by the hero "Resume" banner and the CW row so
+// both always agree on what's first. Key = newest of (your last watch stamp, the
+// persisted/computed new-episode air-time boost); loadCwBoosts seeds the boosts from
+// localStorage so the very first paint is already in final order.
+function cwSorted(st) {
+    loadCwBoosts();
+    const stampOf = (t) => {
+        let best = 0;
+        for (const [k, v] of Object.entries(st.positions || {}))
+            if (k === t.id || k.startsWith(t.id + ':')) best = Math.max(best, +String(v).split('|')[2] || 0);
+        return best;
+    };
+    const sortKey = (t) => Math.max(stampOf(t), newEpAirCache[t.id] || 0);
+    return [...(st.continue || [])].sort((a, b) => sortKey(b) - sortKey(a));
+}
 let lastHeroKey = '';
 async function hero(st) {
     const h = $('hero');
-    let t = (st.continue || [])[0];
+    let t = cwSorted(st)[0];   // SORTED first item, not raw st.continue[0] — matches the CW row
     let sub = '', bg = '';
     if (t) sub = t.type === 'series' && cwChip(st, t) ? `Continue watching · ${cwChip(st, t)}` : 'Continue watching';
     const heroKey = t ? t.id + '|' + sub : 'trend';
@@ -1082,15 +1097,9 @@ function paintContinueRow() {
     // just-started Lanterns; air date as a stamp fixes exactly that).
     // TV 2.0.258 parity: the boost is NOT gated on the badge — dismissing the +N by
     // opening the show keeps the position until the new episodes are actually watched.
-    loadCwBoosts();   // persisted boosts = final order on the FIRST paint, not the second
-    const stampOf = (t) => {
-        let best = 0;
-        for (const [k, v] of Object.entries(st.positions || {}))
-            if (k === t.id || k.startsWith(t.id + ':')) best = Math.max(best, +String(v).split('|')[2] || 0);
-        return best;
-    };
-    const sortKey = (t) => Math.max(stampOf(t), newEpAirCache[t.id] || 0);
-    const bumped = () => [...cont].sort((a, b) => sortKey(b) - sortKey(a));
+    // (sort factored into cwSorted — shared with the hero banner; it loads the persisted
+    // boosts, so the FIRST paint is already final order, not the second)
+    const bumped = () => cwSorted(st);
     const rowSig = () => bumped().map(t => t.id + ':' + (newEpCache[t.id] || 0)).join('|');
     const sig0 = rowSig();
     addRow('Continue Watching', bumped().map(t => ({ ...t })),
@@ -1106,6 +1115,7 @@ function paintContinueRow() {
             addRow('Continue Watching', bumped().map(t => ({ ...t })),
                 (t) => ({ pct: pctOf(st, t), chip: cwChip(st, t), removable: !S.guest, newEps: newEpCache[t.id] || 0 }),
                 cwHolderEl);
+            hero(st);   // banner follows the same order — its lastHeroKey guard makes this a no-op when #1 didn't move
         }
     })();
 }
