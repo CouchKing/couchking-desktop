@@ -16,6 +16,29 @@
 (function () {
     const DESK = !!window.ck;   // preload ran first = Electron
 
+    // App-matched icons (AJ Sep 26 "look exactly like the app's icons") — these are the SAME
+    // vector paths as the Android app's drawables (ic_play/ic_pause/ic_rew/ic_ffwd/… ), rendered
+    // as inline SVG so the web player's buttons match the app pixel-for-pixel.
+    const CK_ICONS = {
+        play: 'M8,5v14l11,-7z',
+        pause: 'M6,19h4V5H6zM14,5v14h4V5z',
+        rew: 'M11,18V6l-8.5,6L11,18zM11.5,12l8.5,6V6l-8.5,6z',
+        ffwd: 'M4,18l8.5,-6L4,6v12zM13,6v12l8.5,-6L13,6z',
+        next: 'M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z',
+        subs: 'M20,4H4C2.9,4 2,4.9 2,6v12c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V6C22,4.9 21.1,4 20,4zM4,12h4v2H4V12zM14,18H4v-2h10V18zM20,18h-4v-2h4V18zM20,14H10v-2h10V14z',
+        textsize: 'M2,10 h7 v2.3 h-2.3 V20 H4.3 v-7.7 H2 Z M11,4 h11 v2.8 h-4.1 V20 h-2.8 V6.8 H11 Z',
+        scale: 'M15,3l2.3,2.3 -2.89,2.87 1.42,1.42L18.7,6.7 21,9V3h-6zM3,9l2.3,-2.3 2.87,2.89 1.42,-1.42L6.7,5.3 9,3H3v6zM9,21l-2.3,-2.3 2.89,-2.87 -1.42,-1.42L5.3,17.3 3,15v6h6zM21,15l-2.3,2.3 -2.87,-2.89 -1.42,1.42 2.89,2.87L15,21h6v-6z',
+        speed: 'M20.38,8.57l-1.23,1.85a8,8 0,0 1,-0.22 7.58H5.07A8,8 0,0 1,15.58 6.85l1.85,-1.23A10,10 0,0 0,3.35 19a2,2 0,0 0,1.72 1h13.85a2,2 0,0 0,1.74 -1,10 10,0 0,0 -0.27,-10.44zM10.59,15.41a2,2 0,0 0,2.83 0l5.66,-8.49 -8.49,5.66a2,2 0,0 0,0 2.83z',
+        info: 'M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM13,17h-2v-6h2v6zM13,9h-2V7h2v2z',
+        fav: 'M12,17.27L18.18,21l-1.64,-7.03L22,9.24l-7.19,-0.61L12,2 9.19,8.63 2,9.24l5.46,4.73L5.82,21z',
+        guide: 'M3,5h18v2H3zM3,9h18v2H3zM3,13h12v2H3zM3,17h12v2H3z',
+        fs: 'M7,14H5v5h5v-2H7v-3zM5,10h2V7h3V5H5v5zM17,17h-3v2h5v-5h-2v3zM14,5v2h3v3h2V5h-5z',
+        pip: 'M19,7h-8v6h8V7zM21,3H3C1.9,3 1,3.9 1,5v14c0,1.1 0.9,2 2,2h18c1.1,0 2,-0.9 2,-2V5C23,3.9 22.1,3 21,3zM21,19H3V4.98h18V19z',
+        cast: 'M1,18v3h3c0,-1.66 -1.34,-3 -3,-3zM1,14v2c2.76,0 5,2.24 5,5h2c0,-3.87 -3.13,-7 -7,-7zM1,10v2c4.97,0 9,4.03 9,9h2c0,-6.08 -4.93,-11 -11,-11zM21,3H3C1.9,3 1,3.9 1,5v3h2V5h18v14h-7v2h7c1.1,0 2,-0.9 2,-2V5C23,3.9 22.1,3 21,3z',
+        restart: 'M12,5V1L7,6l5,5V7c3.31,0 6,2.69 6,6s-2.69,6 -6,6s-6,-2.69 -6,-6H4c0,4.42 3.58,8 8,8s8,-3.58 8,-8S16.42,5 12,5z',
+    };
+    const ckIc = (n) => `<svg viewBox="0 0 24 24" class="wpi" aria-hidden="true"><path d="${CK_ICONS[n] || ''}"/></svg>`;
+
     // Live-captions side panel CSS — matches the look of .wp-menu (see style.css) but
     // pinned to the RIGHT edge and vertically centred so it stays open while the viewer
     // clicks through tracks, and never covers the bottom-centre .wp-cue captions.
@@ -110,9 +133,16 @@
                   <div class="wp-top">
                     <button class="wp-btn wp-back">‹ Back</button><span class="wp-title"></span>
                     <span class="wp-right"><span class="wp-clock"></span><span class="wp-ends"></span></span>
+                    <button class="wp-btn wp-corner wp-pip" title="Pop out">${ckIc('pip')}</button>
+                    <button class="wp-btn wp-corner wp-cast" title="Cast">${ckIc('cast')}</button>
                   </div>
                   <div class="wp-skiprow hidden"><button class="wp-skip">Skip intro ⏭</button><button class="wp-skipx">Dismiss</button></div>
                   <div class="wp-shuttle hidden"></div>
+                  <div class="wp-center">
+                    <button class="wp-btn wp-rew">${ckIc('rew')}</button>
+                    <button class="wp-btn wp-pp">${ckIc('pause')}</button>
+                    <button class="wp-btn wp-fwd">${ckIc('ffwd')}</button>
+                  </div>
                   <div class="wp-next hidden">
                     <div class="wpn-tag">UP NEXT</div><div class="wpn-title"></div>
                     <div class="wpn-btns"><button class="wpn-play">▶ Play now</button><button class="wpn-dismiss">Dismiss</button></div>
@@ -121,19 +151,16 @@
                     <div class="wp-bar"><div class="wp-fill"></div><div class="wp-dot"></div></div>
                     <div class="wp-times"><span class="wp-cur">0:00</span><span class="wp-dur">–:––</span></div>
                     <div class="wp-controls">
-                      <div class="wp-cell"><span>Back ${seekStep}s</span><button class="wp-btn wp-rew">⏪</button></div>
-                      <div class="wp-cell"><span>Play / Pause</span><button class="wp-btn wp-pp">⏸</button></div>
-                      <div class="wp-cell"><span>Forward ${seekStep}s</span><button class="wp-btn wp-fwd">⏩</button></div>
-                      ${hasNext ? '<div class="wp-cell"><span>Next</span><button class="wp-btn wp-nextbtn">⏭</button></div>' : ''}
-                      <div class="wp-cell"><span>Subtitles</span><button class="wp-btn wp-subs">💬</button></div>
-                      <div class="wp-cell"><span>Sub Size</span><button class="wp-btn wp-subsize">Aa</button></div>
-                      <div class="wp-cell"><span>Size</span><button class="wp-btn wp-scale">⤢</button></div>
-                      <div class="wp-cell"><span>Speed</span><button class="wp-btn wp-speed">1×</button></div>
-                      <div class="wp-cell"><span>Restart</span><button class="wp-btn wp-restart" title="Play from beginning">⟲</button></div>
-                      <div class="wp-cell"><span>Info</span><button class="wp-btn wp-info">ⓘ</button></div>
-                      <div class="wp-cell"><span>Report</span><button class="wp-btn wp-report" title="Report a problem">🛟</button></div>
+                      ${hasNext ? `<div class="wp-cell"><span>Next</span><button class="wp-btn wp-nextbtn">${ckIc('next')}</button></div>` : ''}
+                      <div class="wp-cell"><span>Subtitles</span><button class="wp-btn wp-subs">${ckIc('subs')}</button></div>
+                      <div class="wp-cell"><span>Sub Size</span><button class="wp-btn wp-subsize">${ckIc('textsize')}</button></div>
+                      <div class="wp-cell"><span>Size</span><button class="wp-btn wp-scale">${ckIc('scale')}</button></div>
+                      <div class="wp-cell"><span>Speed</span><button class="wp-btn wp-speed">${ckIc('speed')}</button></div>
+                      <div class="wp-cell"><span>Restart</span><button class="wp-btn wp-restart" title="Play from beginning">${ckIc('restart')}</button></div>
+                      <div class="wp-cell"><span>Info</span><button class="wp-btn wp-info">${ckIc('info')}</button></div>
+                      <div class="wp-cell"><span>Report</span><button class="wp-btn wp-report" title="Report a problem">${ckIc('info')}</button></div>
                       <div class="wp-cell"><span>Volume</span><input class="wp-vol" type="range" min="0" max="1" step=".05" value="1"></div>
-                      <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">⛶</button></div>
+                      <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">${ckIc('fs')}</button></div>
                     </div>
                   </div>
                   <div class="wp-menu hidden"></div>
@@ -145,7 +172,45 @@
             player.querySelector('.wp-title').textContent = title || '';
             const v = player.querySelector('video');
             const ui = player.querySelector('.wp-ui');
-            const src = (t) => localFile ? localFile : `${SVC}/webplay?u=${u}&t=${Math.floor(t)}`;
+            // POP-OUT (Picture-in-Picture) + CAST (AJ Sep 26 "pop out view to read a text + cast button").
+            // PiP: manual button AND auto pop-out when you leave/hide the tab while it's playing, so it
+            // keeps going in the corner. Cast: Remote Playback API (AirPlay / Chromecast where supported).
+            (() => {
+                const pip = player.querySelector('.wp-pip'), cast = player.querySelector('.wp-cast');
+                // coming back from pop-out shouldn't pause it (AJ Sep 26): some browsers pause on
+                // PiP exit — resume if it wasn't a deliberate pause.
+                v.addEventListener('leavepictureinpicture', () => setTimeout(() => { if (v.paused) v.play().catch(() => {}); }, 120));
+                v.addEventListener('webkitpresentationmodechanged', () => { if (v.webkitPresentationMode !== 'picture-in-picture' && v.paused) v.play().catch(() => {}); });
+                const stdPiP = document.pictureInPictureEnabled && !v.disablePictureInPicture;
+                const wkPiP = typeof v.webkitSupportsPresentationMode === 'function'
+                              && v.webkitSupportsPresentationMode('picture-in-picture');   // iOS Safari
+                if (stdPiP) {                       // Android Chrome / desktop
+                    pip.onclick = () => (document.pictureInPictureElement
+                        ? document.exitPictureInPicture() : v.requestPictureInPicture()).catch(() => {});
+                    // auto pop-out on app/tab switch — the browser must do this ITSELF (you can't
+                    // request PiP once the page is already hidden, which is why swiping away kept
+                    // audio but never popped out — AJ Sep 26). autoPictureInPicture is that hook.
+                    try { v.autoPictureInPicture = true; v.setAttribute('autopictureinpicture', ''); } catch (e) {}
+                } else if (wkPiP) {                 // iOS Safari WebKit PiP
+                    pip.onclick = () => { try {
+                        v.webkitSetPresentationMode(v.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+                    } catch (e) {} };
+                } else { pip.style.display = 'none'; }
+                // Cast: Remote Playback (Android/desktop Chrome → Chromecast) or WebKit AirPlay (iOS)
+                if (v.remote && typeof v.remote.prompt === 'function') {
+                    try { v.remote.watchAvailability(() => {}).catch(() => {}); } catch (e) {}  // start cast-device discovery NOW so the button is ready fast (AJ Sep 26)
+                    cast.onclick = () => v.remote.prompt().catch(() => {});
+                } else if (typeof v.webkitShowPlaybackTargetPicker === 'function') {
+                    cast.onclick = () => { try { v.webkitShowPlaybackTargetPicker(); } catch (e) {} };
+                } else { cast.style.display = 'none'; }
+            })();
+            // iPhone/iPad Safari can't play the fragmented-MP4 /webplay stream, but it plays HLS
+            // natively (AJ Sep 26 "make it work on iphone"). Route iOS through /webhls; everything
+            // else keeps the fMP4 fast path. (iPadOS reports as Mac, so also catch touch-Mac.)
+            const _isIOS = /iP(hone|ad|od)/.test(navigator.userAgent)
+                || (/Macintosh/.test(navigator.userAgent) && (navigator.maxTouchPoints || 0) > 1);
+            const src = (t) => localFile ? localFile
+                : `${SVC}/${_isIOS ? 'webhls' : 'webplay'}?u=${u}&t=${Math.floor(t)}`;
             // /webplay stream-copies video, so after a seek it really starts at the
             // KEYFRAME before the asked second — up to several seconds early. Everything
             // here (cues, timeline, reported resume) assumed start == asked second, which
@@ -359,7 +424,7 @@
             player.querySelector('.wp-speed').onclick = () => menu.classList.contains('hidden')
                 ? openMenu('Speed', SPEEDS.map(sp => [sp === 1 ? 'Normal' : sp + '×', () => {
                     state.speed = sp; v.playbackRate = sp;
-                    player.querySelector('.wp-speed').textContent = sp + '×';
+                    player.querySelector('.wp-speed').title = sp + '×';
                 }, state.speed === sp]))
                 : menu.classList.add('hidden');
             // Info: what the stream actually is (web's version of the TV player's stats)
@@ -374,14 +439,14 @@
                 ].filter(Boolean).join('\n');
                 infoBox.classList.remove('hidden');
             };
-            // 🛟 REPORT A PROBLEM (AJ Oct 17): type it, Send → the server's Problem Reports
-            // channel with who/where/version attached. Identity rides window.ckIdent (app.js
-            // keeps it current with the active profile); absent = IP-labelled.
+            // 🛟 REPORT A PROBLEM (AJ Oct 17): type the problem, Send → the server's Problem
+            // Reports channel with who/where/version attached. Identity rides window.ckIdent
+            // (app.js keeps it current with the active profile); absent = IP-labelled.
             const reportBtn = player.querySelector('.wp-report');
             if (reportBtn) reportBtn.onclick = () => {
                 if (!infoBox.classList.contains('hidden')) infoBox.classList.add('hidden');
                 let box = player.querySelector('.wp-reportbox');
-                if (box) { box.remove(); return; }
+                if (box) { box.remove(); return; }   // toggle off
                 box = document.createElement('div');
                 box.className = 'wp-reportbox';
                 box.innerHTML = `<div class="wp-rpt-title">🛟 Report a problem</div>
@@ -401,8 +466,8 @@
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                                 text: txt, u: id.user || '', key: id.key || '',
-                                v: 'desktop', model: navigator.platform || 'desktop',
-                                ctx: `Desktop player — ${title || '?'} @ ${Math.floor(posS / 60)}m${posS % 60}s`,
+                                v: 'web', model: navigator.platform || 'web',
+                                ctx: `Web player — ${title || '?'} @ ${Math.floor(posS / 60)}m${posS % 60}s`,
                             }),
                         });
                         box.innerHTML = '<div class="wp-rpt-title">Sent — thank you! 🛟</div>';
@@ -444,8 +509,9 @@
                 }).catch(() => {});
 
             const cur = () => state ? state.offset + (v.currentTime || 0) : 0;
+            let dragging = false;   // scrubbing the seekbar — don't let the tick overwrite the drag
             const paint = () => {
-                if (!state) return;
+                if (!state || dragging) return;
                 player.querySelector('.wp-cur').textContent = fmt(cur());
                 player.querySelector('.wp-dur').textContent = state.dur ? fmt(state.dur) : '–:––';
                 const pct = state.dur ? Math.min(100, 100 * cur() / state.dur) : 0;
@@ -578,11 +644,12 @@
                     v.play().catch(() => {});
                 }, 20000);
             }
-            // PiP + OS media controls (AJ Sep 28): 10s-back / 10s-forward / Next-episode buttons in
-            // the Picture-in-Picture window + OS media UI via the Media Session API.
+            // PiP + OS media controls (AJ Sep 28): expose 10s-back / 10s-forward / Next-episode as
+            // buttons inside the Picture-in-Picture window (and the OS/lock-screen media UI) via the
+            // Media Session API — Chrome/Edge render seek + next-track handlers as PiP buttons.
             if ('mediaSession' in navigator) {
                 try {
-                    navigator.mediaSession.metadata = new MediaMetadata({ title: title || 'CouchKing' });
+                    navigator.mediaSession.metadata = new MediaMetadata({ title: title || 'CouchKing', artist: nextLabel ? '' : '' });
                     navigator.mediaSession.setActionHandler('seekbackward', () => seekTo(cur() - state.step));
                     navigator.mediaSession.setActionHandler('seekforward', () => seekTo(cur() + state.step));
                     navigator.mediaSession.setActionHandler('nexttrack', hasNext ? fireNext : null);
@@ -725,8 +792,8 @@
                 }
                 player?.querySelector('.wp-hint')?.classList.remove('hidden');
             });
-            v.addEventListener('play', () => { player.querySelector('.wp-pp').textContent = '⏸'; });
-            v.addEventListener('pause', () => { player.querySelector('.wp-pp').textContent = '▶'; });
+            v.addEventListener('play', () => { player.querySelector('.wp-pp').innerHTML = ckIc('pause'); });
+            v.addEventListener('pause', () => { player.querySelector('.wp-pp').innerHTML = ckIc('play'); });
 
             player.querySelector('.wp-back').onclick = () => closePlayer(true);
             // ---- Netflix-style stepped FF/RW shuttle (AJ Oct 11) ----
@@ -750,7 +817,7 @@
                 if (resume) { seekTo(shuttle.pos); v.play().catch(() => {}); }
             };
             const shuttleStep = (dir) => {
-                if (!state?.dur) { seekTo(cur() + dir * state.step); return; }   // unknown length: plain step
+                if (!state?.dur) { seekTo(cur() + dir * state.step); return; }   // live/unknown-length: plain step
                 const lvl = Math.max(-3, Math.min(3, shuttle.level + dir));
                 if (lvl === 0) { shuttleStop(true); return; }
                 if (!shuttle.level) { shuttle.pos = cur(); v.pause(); }
@@ -790,25 +857,67 @@
             // Restart = play from the very beginning (AJ Oct 11), beside Info
             player.querySelector('.wp-restart').onclick = () => { shuttleStop(false); seekTo(0); v.play().catch(() => {}); };
             player.querySelector('.wp-vol').oninput = (e) => { v.volume = +e.target.value; };
-            player.querySelector('.wp-fs').onclick = () =>
-                document.fullscreenElement ? document.exitFullscreen() : player.requestFullscreen().catch(() => {});
-            player.querySelector('.wp-bar').onclick = (e) => {
-                if (!state?.dur) return;
-                const r = e.currentTarget.getBoundingClientRect();
-                seekTo(state.dur * (e.clientX - r.left) / r.width);
-            };
-            v.onclick = () => {
-                // tapping the video dismisses any open overlay so it isn't left stranded
-                menu.classList.add('hidden'); subPanel.classList.add('hidden');
-                v.paused ? v.play() : v.pause();
-            };
-
+            // Fullscreen: use real element-fullscreen on desktop/Android/iPad. On iPHONE there is
+            // no element fullscreen — the player is ALREADY full-viewport (position:fixed inset:0),
+            // and iOS's native video fullscreen just slaps a source-URL banner on top (AJ Sep 26
+            // "get rid of the website at the top"). So on iPhone we drop the redundant button.
+            player.querySelector('.wp-fs').onclick = () => { try {
+                if (document.fullscreenElement || document.webkitFullscreenElement)
+                    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+                else if (player.requestFullscreen || player.webkitRequestFullscreen)
+                    (player.requestFullscreen || player.webkitRequestFullscreen).call(player);
+                else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();   // iPhone: native video FS
+            } catch (e) {} };
+            // DRAGGABLE scrubber (AJ Sep 26 "want to be able to drag the seekbar"): grab & drag the
+            // bar/dot, the fill + time follow your finger, and it only seeks on RELEASE (one seek,
+            // not one per pixel — important since each seek reopens the transcode). A plain tap
+            // still seeks to that spot (pointerdown+up at one point).
+            {
+                const bar = player.querySelector('.wp-bar');
+                const frac = (clientX) => {
+                    const r = bar.getBoundingClientRect();
+                    return Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+                };
+                const preview = (f) => {
+                    player.querySelector('.wp-fill').style.width = (f * 100) + '%';
+                    player.querySelector('.wp-dot').style.left = (f * 100) + '%';
+                    if (state?.dur) player.querySelector('.wp-cur').textContent = fmt(state.dur * f);
+                };
+                const onMove = (e) => { if (dragging) { preview(frac(e.clientX)); wake(); } };
+                const onUp = (e) => {
+                    if (!dragging) return;
+                    dragging = false; bar.classList.remove('drag');
+                    document.removeEventListener('pointermove', onMove);
+                    document.removeEventListener('pointerup', onUp);
+                    if (state?.dur) seekTo(state.dur * frac(e.clientX));
+                };
+                bar.addEventListener('pointerdown', (e) => {
+                    if (!state?.dur) return;
+                    e.preventDefault();
+                    dragging = true; bar.classList.add('drag'); wake();
+                    preview(frac(e.clientX));
+                    document.addEventListener('pointermove', onMove);
+                    document.addEventListener('pointerup', onUp);
+                });
+            }
             // controls fade like the TV player: show on mouse move, hide after 3s idle
             let hideT = null;
             const wake = () => {
                 ui.classList.remove('idle');
                 clearTimeout(hideT);
                 hideT = setTimeout(() => !v.paused && ui.classList.add('idle'), 3000);
+            };
+            // TAP anywhere — video OR the black letterbox — toggles the controls, NEVER pauses.
+            // Capture idle state on pointerDOWN: a tap fires a synthetic mousemove first, which
+            // runs wake() and clears 'idle' before the click — so checking idle in the click read
+            // stale state and it could only ever HIDE, never show (AJ Sep 26). wasIdle fixes that.
+            let wasIdle = false;
+            player.addEventListener('pointerdown', () => { wasIdle = ui.classList.contains('idle'); });
+            player.onclick = (e) => {
+                if (e.target.closest('button, input, .wp-controls, .wp-menu, .wp-subpanel, .wp-infobox, .wp-next, .wp-bar')) return;
+                menu.classList.add('hidden'); subPanel.classList.add('hidden');
+                if (wasIdle) wake();
+                else { clearTimeout(hideT); ui.classList.add('idle'); }
             };
             player.addEventListener('mousemove', wake); wake();
             document.addEventListener('keydown', function keys(e) {
@@ -840,9 +949,9 @@
                     body: body ? JSON.stringify(body) : undefined
                 });
                 clearTimeout(t);
-                // url = the FINAL post-redirect URL (notice-clip probe reads it; main.js matches)
+                // url = the FINAL post-redirect URL (notice-clip probe reads it; desktop main.js matches)
                 return { ok: r.ok, status: r.status, url: r.url || '', text: await r.text() };
-            } catch (e) { return { ok: false, status: 0, text: String(e).slice(0, 200) }; }
+            } catch (e) { return { ok: false, status: 0, url: '', text: String(e).slice(0, 200) }; }
         },
         play: (o) => webPlay(o),
         stopPlay: async () => { closePlayer(true); return { ok: true }; },
@@ -875,23 +984,53 @@
               </div>
               <div class="wp-bottom">
                 <div class="wp-controls">
-                  <div class="wp-cell"><span>Play / Pause</span><button class="wp-btn wp-pp">⏸</button></div>
+                  <div class="wp-cell"><span>Play / Pause</span><button class="wp-btn wp-pp">${ckIc('pause')}</button></div>
                   <div class="wp-cell"><span>Favorite</span><button class="wp-btn wp-fav">☆</button></div>
-                  <div class="wp-cell"><span>Guide</span><button class="wp-btn wp-guide">📋</button></div>
+                  <div class="wp-cell"><span>Guide</span><button class="wp-btn wp-guide">${ckIc('guide')}</button></div>
                   <div class="wp-cell wp-lastcell" style="display:none"><span>Last channel</span><button class="wp-btn wp-last" title="Last channel">↩</button></div>
+                  <div class="wp-cell"><span>Pop out</span><button class="wp-btn wp-pip">${ckIc('pip')}</button></div>
+                  <div class="wp-cell"><span>Cast</span><button class="wp-btn wp-cast">${ckIc('cast')}</button></div>
                   <div class="wp-cell"><span>Volume</span><input class="wp-vol" type="range" min="0" max="1" step=".05" value="1"></div>
-                  <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">⛶</button></div>
+                  <div class="wp-cell"><span>Fullscreen</span><button class="wp-btn wp-fs">${ckIc('fs')}</button></div>
                 </div>
               </div>
               <div class="lv-guidepanel hidden"></div>
             </div>`;
         player.querySelector('.wp-title').textContent = title || '';
+        // POP-OUT (PiP) + CAST for Live TV (AJ Sep 26) — same Android/iOS paths as the VOD player.
+        (() => {
+            const lv = player.querySelector('video');
+            const pip = player.querySelector('.wp-pip'), cast = player.querySelector('.wp-cast');
+            lv.addEventListener('leavepictureinpicture', () => setTimeout(() => { if (lv.paused) lv.play().catch(() => {}); }, 120));
+            lv.addEventListener('webkitpresentationmodechanged', () => { if (lv.webkitPresentationMode !== 'picture-in-picture' && lv.paused) lv.play().catch(() => {}); });
+            const stdPiP = document.pictureInPictureEnabled && !lv.disablePictureInPicture;
+            const wkPiP = typeof lv.webkitSupportsPresentationMode === 'function'
+                          && lv.webkitSupportsPresentationMode('picture-in-picture');
+            if (stdPiP) {
+                pip.onclick = () => (document.pictureInPictureElement
+                    ? document.exitPictureInPicture() : lv.requestPictureInPicture()).catch(() => {});
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden && !lv.paused && !document.pictureInPictureElement)
+                        lv.requestPictureInPicture().catch(() => {});
+                });
+            } else if (wkPiP) {
+                pip.onclick = () => { try {
+                    lv.webkitSetPresentationMode(lv.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+                } catch (e) {} };
+            } else { pip.style.display = 'none'; }
+            if (lv.remote && typeof lv.remote.prompt === 'function') {
+                try { lv.remote.watchAvailability(() => {}).catch(() => {}); } catch (e) {}  // start cast-device discovery NOW so the button is ready fast (AJ Sep 26)
+                    cast.onclick = () => lv.remote.prompt().catch(() => {});
+            } else if (typeof lv.webkitShowPlaybackTargetPicker === 'function') {
+                cast.onclick = () => { try { lv.webkitShowPlaybackTargetPicker(); } catch (e) {} };
+            } else { cast.style.display = 'none'; }
+        })();
         document.body.appendChild(player);
         document.body.style.overflow = 'hidden';
         const v = player.querySelector('video');
         // LIVE = NO captions, ever (TV 2.0.258 parity): broadcast feeds carry embedded
-        // CEA-608/708 + WebVTT tracks that native HLS (and hls.js) can auto-show from
-        // system caption prefs — force every text track off, including tracks added
+        // CEA-608/708 + WebVTT tracks that Safari's native HLS (and hls.js) can auto-show
+        // from system caption prefs — force every text track off, including tracks added
         // later by engine swaps / channel hops. VOD subtitles are untouched (webPlay).
         const killCc = () => { try { for (const tt of v.textTracks) if (tt.mode !== 'disabled') tt.mode = 'disabled'; } catch {} };
         killCc();
@@ -907,8 +1046,9 @@
         const ov = document.createElement('div');
         ov.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#0c0c10;z-index:6';
         const ovImg = document.createElement('img');
-        ovImg.style.cssText = 'max-height:90px;max-width:220px'; ovImg.onerror = () => ovImg.remove();
-        if (logo) ovImg.src = logo; else ovImg.remove();
+        // hide (never remove) on error — the element must survive for channel-hop logos
+        ovImg.style.cssText = 'max-height:90px;max-width:220px'; ovImg.onerror = () => { ovImg.style.display = 'none'; };
+        if (logo) ovImg.src = logo; else ovImg.style.display = 'none';
         const ovSpin = document.createElement('div');
         ovSpin.style.cssText = 'width:34px;height:34px;border:3px solid #333;border-top-color:#e64545;border-radius:50%;animation:ckspin 1s linear infinite';
         const ovName = document.createElement('div'); ovName.style.cssText = 'font-size:21px;color:#fff;font-weight:600';
@@ -923,8 +1063,11 @@
         ov.appendChild(ovBack);
         player.appendChild(ov);
         let tuned = false, dogT = 0;
-        const showOv = (nm, nw) => { tuned = false; ovName.textContent = 'Tuning ' + (nm || 'channel') + '…';
-            ovNow.textContent = nw ? 'Now: ' + nw : ''; ovSpin.style.display = ''; ov.style.display = 'flex'; };
+        const showOv = (nm, nw, lg) => { tuned = false; ovName.textContent = 'Tuning ' + (nm || 'channel') + '…';
+            ovNow.textContent = nw ? 'Now: ' + nw : ''; ovSpin.style.display = ''; ov.style.display = 'flex';
+            // channel hop: the overlay shows the NEW channel's logo, not the session's first
+            // (AJ Sep 26 "doesn't change the logo channel to channel") — no logo = hide it
+            if (lg !== undefined) { if (lg) { ovImg.src = lg; ovImg.style.display = ''; } else ovImg.style.display = 'none'; } };
         showOv(title, now);
         v.addEventListener('playing', () => { tuned = true; clearTimeout(dogT); clearTimeout(stallT); ov.style.display = 'none'; });
         // MID-PLAY stall heal (AJ Sep 17 Buffy "freezes after 7 seconds"): panel sessions
@@ -1007,47 +1150,85 @@
             // red now-line (AJ Sep 24: "doesn't update unless you update the page")
             try { onClose && onClose(); } catch {} };
         player.querySelector('.wp-back').onclick = bail;
-        // GUIDE while watching (AJ Sep 17): side panel of the current category's channels
-        // with what's on now — click = tune straight over, playback never closes
-        const gp = player.querySelector('.lv-guidepanel');
+        // FULL GUIDE + CORNER VIDEO (Nov 7, TV-app "mini guide" parity): the Guide button
+        // (or Esc stepping out) opens a full-screen guide while the SAME <video> shrinks to
+        // the top-right corner — playback never stops, no engine churn. Click the playing
+        // channel (or the corner video) = back to fullscreen; click another channel = tune
+        // with the guide still up. Replaces the old narrow side panel.
+        const gp = player.querySelector('.lv-guidepanel');   // legacy panel (kept hidden; CSS reused)
         const gbtn = player.querySelector('.wp-guide');
-        if (guide.length && onTune) {
-            gbtn.onclick = () => {
-                if (!gp.classList.contains('hidden')) { gp.classList.add('hidden'); return; }
-                gp.innerHTML = '';
-                for (const ch of guide) {
-                    if (ch.hdr) {   // section divider (★ Favorites / Continue watching / Sports…)
-                        const h = document.createElement('div');
-                        h.textContent = ch.hdr;
-                        h.style.cssText = 'opacity:.65;font-weight:700;font-size:12px;padding:10px 4px 2px;pointer-events:none;text-transform:uppercase;letter-spacing:.5px';
-                        gp.appendChild(h); continue;
-                    }
-                    const r = document.createElement('div'); r.className = 'lvg-row';
-                    r.innerHTML = `<span class="lvg-name"></span><span class="lvg-now"></span>`;
-                    r.querySelector('.lvg-name').textContent = ch.name;
-                    r.querySelector('.lvg-now').textContent = ch.now || '';
-                    r.onclick = async () => {
-                        r.classList.add('busy');
-                        try { await hopTo(ch.id, ch.name, ch.logo || '', ch.now); }
-                        finally { r.classList.remove('busy'); }
-                    };
-                    gp.appendChild(r);
-                }
-                gp.classList.remove('hidden');
+        let fgEl = null;
+        const hideFullGuide = () => { if (!fgEl) return; fgEl.remove(); fgEl = null; v.classList.remove('wp-corner'); };
+        const showFullGuide = () => {
+            if (fgEl || !guide.length || !onTune) return;
+            v.classList.add('wp-corner');
+            fgEl = document.createElement('div');
+            fgEl.className = 'wp-fullguide';
+            const head = document.createElement('div'); head.className = 'wpg-head';
+            const body = document.createElement('div'); body.className = 'wpg-body';
+            fgEl.append(head, body);
+            const paintHead = () => {
+                head.innerHTML = '';
+                if (curLogo) { const im = document.createElement('img'); im.src = curLogo; im.onerror = () => im.remove(); head.appendChild(im); }
+                const t = document.createElement('div');
+                const b = document.createElement('b'); b.textContent = curName || '';
+                const s = document.createElement('span'); s.textContent = 'Watching now — click a channel to switch · click the video for fullscreen · Esc closes';
+                t.append(b, s); head.appendChild(t);
             };
+            const rowEls = [];
+            const paintRows = () => { rowEls.forEach(([el2, id2, nm2]) => {
+                const on = id2 === curCh;
+                el2.querySelector('.lvg-name').textContent = (on ? '▶ ' : '') + nm2;
+                el2.querySelector('.lvg-name').style.color = on ? '#b9a6ff' : '';
+            }); paintHead(); };
+            for (const ch of guide) {
+                if (ch.hdr) {   // section BAND: color-coded left bar + faint tint (🔴 red,
+                    // ★ gold, ↻ teal, sections purple) — same language as the TV guide
+                    const color = ch.hdr.startsWith('🔴') ? '#e64545'
+                        : ch.hdr.startsWith('★') ? '#f5c542'
+                        : ch.hdr.startsWith('↻') ? '#4ec9b0' : '#b9a6ff';
+                    const h = document.createElement('div');
+                    h.textContent = ch.hdr;
+                    h.style.cssText = `color:${color};background:${color}26;border-left:4px solid ${color};` +
+                        'font-weight:700;font-size:12px;padding:7px 8px;margin:12px 0 4px;border-radius:8px;' +
+                        'pointer-events:none;text-transform:uppercase;letter-spacing:.5px';
+                    body.appendChild(h); continue;
+                }
+                const r = document.createElement('div'); r.className = 'lvg-row';
+                r.innerHTML = `<span class="lvg-name"></span><span class="lvg-now"></span>`;
+                r.querySelector('.lvg-name').textContent = ch.name;
+                r.querySelector('.lvg-now').textContent = ch.now || '';
+                if (ch.live) r.querySelector('.lvg-now').style.color = '#e64545';   // 🔴 game rows
+                rowEls.push([r, ch.id, ch.name]);
+                r.onclick = async () => {
+                    if (ch.id === curCh) { hideFullGuide(); return; }   // what's playing = fullscreen
+                    r.classList.add('busy');
+                    try { await hopTo(ch.id, ch.name, ch.logo || '', ch.now, paintRows); }
+                    finally { r.classList.remove('busy'); }
+                };
+                body.appendChild(r);
+            }
+            player.appendChild(fgEl);
+            paintRows();
+        };
+        if (guide.length && onTune) {
+            gbtn.onclick = () => (fgEl ? hideFullGuide() : showFullGuide());
+            v.addEventListener('click', () => { if (fgEl) hideFullGuide(); });
         } else gbtn.parentElement.style.display = 'none';
         // ★ the channel you're WATCHING (AJ Sep 17) — state follows in-player channel hops
         const favB = player.querySelector('.wp-fav');
         let curCh = chid, curFav = !!fav, curName = title, curLogo = logo;
         const paintFav = () => { favB.textContent = curFav ? '★' : '☆'; favB.style.color = curFav ? '#f5c542' : ''; };
-        // ↩ LAST CHANNEL (AJ Oct 27, parity w/ web): classic cable-box recall — one tap bounces
-        // to the previously-tuned channel. Seeded from the key's last tune (lastCh, server-synced
-        // via lvrec), so it works the instant you open — even before hopping — then tracks every hop.
+        // ↩ LAST CHANNEL (AJ Oct 27 "the last button like last channel they were on even when
+        // they click out"): classic cable-box recall — one tap bounces to the previously-tuned
+        // channel. Seeded from the key's last tune (lastCh, server-synced across web/iOS/TV via
+        // lvrec), so it works the instant you open — even before hopping — then tracks every hop.
         let prevCh = (lastCh && lastCh !== chid) ? lastCh : '', prevName = lastName || '', prevLogo = lastLogo || '';
         const lastCell = player.querySelector('.wp-lastcell'), lastBtn = player.querySelector('.wp-last');
         const paintLast = () => { if (lastCell) lastCell.style.display = prevCh ? '' : 'none'; if (lastBtn && prevName) lastBtn.title = 'Last: ' + prevName; };
-        // shared tune-over used by BOTH the guide rows and the ↩ Last button
-        const hopTo = async (id, nm, lg, nwTxt) => {
+        // shared tune-over used by BOTH the guide rows and the ↩ Last button (was inline in the
+        // guide row — extracted so recall reuses the exact same engine swap + overlay + watchdog)
+        const hopTo = async (id, nm, lg, nwTxt, after) => {
             const r2 = await onTune(id);
             const hls = r2?.hls || (typeof r2 === 'string' && r2 ? [r2] : []);
             const ts2 = r2?.ts || '';
@@ -1057,8 +1238,8 @@
             tsCur = ts2;
             player.querySelector('.wp-title').textContent = nm;
             curCh = id; curName = nm; curLogo = lg || ''; curFav = !!(isFav && isFav(id));
-            paintFav(); paintLast();
-            showOv(nm, nwTxt); armDog();
+            paintFav(); paintLast(); if (after) after();
+            showOv(nm, nwTxt, lg || ''); armDog();
             if (sources[0]) await attach(sources[0]); else if (ts2) await playTs(ts2);
             return true;
         };
@@ -1066,17 +1247,22 @@
         if (lastBtn) lastBtn.onclick = async () => {
             if (!prevCh) return;
             lastBtn.classList.add('busy');
-            try { await hopTo(prevCh, prevName, prevLogo, ''); } finally { lastBtn.classList.remove('busy'); }
+            try { await hopTo(prevCh, prevName, prevLogo, '', null); } finally { lastBtn.classList.remove('busy'); }
         };
         if (onFav && chid) {
             paintFav();
             favB.onclick = () => { curFav = !curFav; paintFav(); onFav(curCh, curFav); };
         } else favB.parentElement.style.display = 'none';
         const pp = player.querySelector('.wp-pp');
-        pp.onclick = () => { if (v.paused) { v.play(); pp.textContent = '⏸'; } else { v.pause(); pp.textContent = '▶'; } };
+        pp.onclick = () => { if (v.paused) { v.play(); pp.innerHTML = ckIc('pause'); } else { v.pause(); pp.innerHTML = ckIc('play'); } };
         player.querySelector('.wp-vol').oninput = (e) => v.volume = +e.target.value;
-        player.querySelector('.wp-fs').onclick = () =>
-            document.fullscreenElement ? document.exitFullscreen() : player.requestFullscreen().catch(() => {});
+        player.querySelector('.wp-fs').onclick = () => { try {
+            if (document.fullscreenElement || document.webkitFullscreenElement)
+                (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+            else if (player.requestFullscreen || player.webkitRequestFullscreen)
+                (player.requestFullscreen || player.webkitRequestFullscreen).call(player);
+            else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();   // iPhone: native video FS
+        } catch (e) {} };
         const ckEl = player.querySelector('.wp-clock');
         ckEl.textContent = clock(new Date());
         state.tick = setInterval(() => { if (player) ckEl.textContent = clock(new Date()); }, 30000);
@@ -1097,10 +1283,19 @@
         // pointerdown — else tap-to-show would instantly re-hide what it just showed
         let wasIdle = false;
         player.addEventListener('pointerdown', () => { wasIdle = ui.classList.contains('idle'); });
-        v.onclick = () => { if (wasIdle) wake(); else { clearTimeout(hideT); ui.classList.add('idle'); } };
+        // tap anywhere incl. the black letterbox toggles the UI; real controls handle their own taps
+        player.onclick = (e) => {
+            if (e.target.closest('button, input, .wp-controls, .lv-guidepanel, .wp-fullguide')) return;
+            if (wasIdle) wake(); else { clearTimeout(hideT); ui.classList.add('idle'); }
+        };
         document.addEventListener('keydown', function esc(e) {
             if (!player) { document.removeEventListener('keydown', esc); return; }
-            if (e.key === 'Escape') { bail(); document.removeEventListener('keydown', esc); }
+            // step-out ladder (TV parity): Esc with the full guide up = back to fullscreen;
+            // Esc from fullscreen = leave the player.
+            if (e.key === 'Escape') {
+                if (fgEl) { hideFullGuide(); return; }
+                bail(); document.removeEventListener('keydown', esc);
+            }
         });
     }
 

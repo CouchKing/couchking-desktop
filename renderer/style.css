@@ -45,7 +45,9 @@ select:focus, select:hover { border-color:var(--accent); }
 #rail:hover .rail-label { opacity:1; transform:none; }
 
 #content { flex:1; overflow-y:auto; overflow-x:hidden; }
-.page { padding:1.1rem 1.9rem 2rem; }
+/* clear the iOS status bar/notch when added to Home Screen (standalone) — the ‹ Back and page
+   headers were hiding under the time/wifi (AJ Sep 26). env() insets are 0 in a normal tab. */
+.page { padding:calc(1.1rem + env(safe-area-inset-top)) calc(1.9rem + env(safe-area-inset-right)) 2rem calc(1.9rem + env(safe-area-inset-left)); }
 .page-pad { padding-top:.4rem; }
 
 /* ---- hero (Netflix-style banner from your Continue Watching / trending) ---- */
@@ -64,9 +66,10 @@ select:focus, select:hover { border-color:var(--accent); }
    the enlarged tile stays inside the scroll padding box and isn't clipped (AJ Sep 27). */
 .strip { display:flex; gap:.75rem; overflow-x:auto; padding:.7rem .6rem 1rem; scrollbar-width:none; }
 
-/* WINDOWS SCROLLBARS (AJ Nov 3 "scroll bars everywhere"): Windows paints a chunky gray bar
-   under EVERY poster row / chip strip / side panel (macOS overlays them invisibly). Hide them
-   on all inner scrollers (wheel/drag still scrolls); the main page keeps ONE slim dark bar. */
+/* WINDOWS SCROLLBARS (AJ Nov 3 "scroll bars everywhere"): macOS overlays scrollbars invisibly,
+   but Windows paints a chunky gray bar under EVERY poster row / chip strip / side panel. Hide
+   them on all inner scrollers (wheel/drag/touch still scroll); the main page keeps ONE slim,
+   dark, Netflix-style bar so you never lose your place. */
 .strip::-webkit-scrollbar, .lvcw-row::-webkit-scrollbar, .lvb-row::-webkit-scrollbar,
 .epg-scroll::-webkit-scrollbar, .lv-guidepanel::-webkit-scrollbar,
 #web-player .wp-menu::-webkit-scrollbar { width:0; height:0; display:none; }
@@ -230,11 +233,15 @@ select:focus, select:hover { border-color:var(--accent); }
 #web-player .wp-ui { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:space-between;
                      transition:opacity .25s ease; pointer-events:none; }
 #web-player .wp-ui.idle { opacity:0; }
-/* faded-out controls must not eat taps — an invisible Favorite/Guide button firing on a
-   blind tap is worse than no controls at all (mobile live TV, AJ Sep 24) */
-#web-player .wp-ui.idle > * { pointer-events:none; }
+/* faded-out controls must not eat taps — an invisible button firing on a blind tap is worse than
+   no controls (AJ Sep 24/26). Force EVERYTHING in the hidden UI to ignore taps so any tap falls
+   through to the video and brings the controls back. */
+#web-player .wp-ui.idle, #web-player .wp-ui.idle * { pointer-events:none !important; }
 #web-player .wp-ui > * { pointer-events:auto; }
-#web-player .wp-top { display:flex; align-items:center; gap:1rem; padding:1rem 1.2rem;
+/* clear the iOS status bar / notch when added to the Home Screen (standalone) — the top controls
+   were hiding under the time/wifi (AJ Sep 26). env() insets are 0 in a normal browser tab. */
+#web-player .wp-top { display:flex; align-items:center; gap:.45rem;
+                      padding:calc(1rem + env(safe-area-inset-top)) calc(1.2rem + env(safe-area-inset-right)) 1rem calc(1.2rem + env(safe-area-inset-left));
                       background:linear-gradient(180deg,#000C, transparent); }
 #web-player .wp-title { color:#fff; font-weight:800; font-size:1.05rem; text-shadow:0 1px 6px #000;
                         flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -276,21 +283,67 @@ select:focus, select:hover { border-color:var(--accent); }
 #web-player .wp-rpt-text { width:100%; box-sizing:border-box; background:#1C1832; border:1px solid #37315C;
                            border-radius:10px; color:#F2EFFF; font-size:.95rem; padding:.7rem .8rem; resize:none; }
 #web-player .wp-rpt-row { display:flex; gap:.6rem; margin-top:.8rem; }
-#web-player .wp-rpt-send { background:#7B5BF5; color:#fff; border:0; border-radius:24px; padding:.55rem 1.3rem; font-weight:700; cursor:pointer; }
+#web-player .wp-rpt-send { background:var(--accent); color:#fff; border:0; border-radius:24px; padding:.55rem 1.3rem; font-weight:700; cursor:pointer; }
 #web-player .wp-rpt-cancel { background:#2C2649; color:#F2EFFF; border:0; border-radius:24px; padding:.55rem 1.3rem; font-weight:700; cursor:pointer; }
-#web-player .wp-bottom { padding:0 1.4rem 1rem; background:linear-gradient(0deg,#000D, transparent); }
-#web-player .wp-bar { position:relative; height:6px; background:#FFFFFF3A; border-radius:99px; cursor:pointer; margin-bottom:.4rem; }
-#web-player .wp-fill { height:100%; background:var(--accent); border-radius:99px; }
-#web-player .wp-dot { position:absolute; top:50%; width:14px; height:14px; background:#fff; border-radius:50%;
-                      transform:translate(-50%,-50%); box-shadow:0 0 6px #000A; }
+#web-player .wp-bottom { padding:0 calc(1.4rem + env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom)) calc(1.4rem + env(safe-area-inset-left)); background:linear-gradient(0deg,#000D, transparent); }
+#web-player .wp-bar { position:relative; height:6px; background:#FFFFFF3A; border-radius:99px; cursor:pointer; margin-bottom:.6rem; touch-action:none; }
+/* big invisible grab area so you can actually catch the bar with a finger (AJ Sep 26) */
+#web-player .wp-bar::before { content:''; position:absolute; left:0; right:0; top:-16px; bottom:-16px; }
+#web-player .wp-fill { height:100%; background:var(--accent); border-radius:99px; pointer-events:none; }
+#web-player .wp-dot { position:absolute; top:50%; width:16px; height:16px; background:#fff; border-radius:50%;
+                      transform:translate(-50%,-50%); box-shadow:0 0 6px #000A; pointer-events:none; transition:width .1s,height .1s; }
+/* while dragging: fatter bar + bigger dot so you can see exactly where you're scrubbing */
+#web-player .wp-bar.drag { height:10px; }
+#web-player .wp-bar.drag .wp-dot { width:24px; height:24px; }
+@media (hover: none) { #web-player .wp-bar { height:9px; } #web-player .wp-dot { width:20px; height:20px; } }
 #web-player .wp-times { display:flex; justify-content:space-between; color:#d8d5ea; font-size:.85rem; font-weight:700; margin-bottom:.5rem; }
-#web-player .wp-controls { display:flex; gap:1.6rem; justify-content:center; align-items:flex-end; }
+#web-player .wp-controls { display:flex; flex-wrap:wrap; gap:1.6rem; row-gap:.7rem; justify-content:center; align-items:flex-end; }
+/* portrait phones can't fit ~13 controls in one row (AJ Sep 26 "can't see all the icons vertical")
+   — wrap to multiple rows, tighten spacing/size so every icon stays reachable. */
+@media (max-width: 640px) {
+  /* one clean row on phones (AJ Sep 26 "fit all the icons in the row"): no wrap, evenly spread,
+     labels hidden (the app-matched icons are self-explanatory), buttons compact. */
+  #web-player .wp-controls { flex-wrap:nowrap; gap:.25rem; justify-content:space-between; width:100%; }
+  #web-player .wp-cell > span { display:none; }
+  #web-player .wp-cell { flex:0 0 auto; }
+  #web-player .wp-btn { font-size:.85rem; padding:.4rem .4rem; }
+  #web-player .wp-bottom { padding-left:.6rem; padding-right:.6rem; }
+}
 /* label ABOVE each button — same layout as the TV player bar */
 #web-player .wp-cell { display:flex; flex-direction:column; align-items:center; gap:.3rem; }
 #web-player .wp-cell > span { color:var(--muted); font-size:.72rem; font-weight:700; }
 #web-player .wp-btn { background:#241F3DCC; color:#fff; font-size:1.25rem; padding:.55rem 1rem; border-radius:12px; }
-#web-player .wp-btn:hover { background:var(--accent); }
+/* app-matched SVG glyphs (AJ Sep 26) — sized in em so they scale with each button */
+#web-player .wp-btn .wpi { width:1.4em; height:1.4em; fill:currentColor; display:block; }
+#web-player .wp-center .wp-btn .wpi { width:1.3em; height:1.3em; }
+/* only highlight on real hover devices — on touch, :hover STICKS after a tap so every button
+   stayed purple (AJ Sep 26). Also kill the focus ring that lingered after tapping. */
+@media (hover: hover) { #web-player .wp-btn:hover { background:var(--accent); } }
+#web-player .wp-btn:focus { outline:none; }
+/* an "active" control (e.g. subtitles on) tints just the ICON accent — not a full purple button
+   (AJ Sep 26 "subtitles button purple when not clicked") */
+#web-player .wp-btn.on { background:#241F3DCC; color:var(--accent); }
 #web-player .wp-vol { width:110px; accent-color:var(--accent); }
+/* touch devices control volume with the hardware buttons — hide the slider in BOTH orientations
+   (a landscape phone is wider than 640px so the width query missed it — AJ Sep 26) */
+@media (hover: none) and (pointer: coarse) { #web-player .wp-cell:has(.wp-vol) { display:none; } }
+/* center transport (⏪ ⏸ ⏩) — round translucent player buttons in the middle (AJ Sep 26) */
+#web-player .wp-center { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+                         gap:2rem; pointer-events:none; }
+#web-player .wp-center .wp-btn { pointer-events:auto; display:flex; align-items:center; justify-content:center;
+                                 width:60px; height:60px; padding:0; border-radius:50%; font-size:1.6rem;
+                                 background:#000000B3; backdrop-filter:blur(2px); }
+#web-player .wp-center .wp-pp { width:80px; height:80px; font-size:2.1rem; }
+/* CRITICAL: when the UI is hidden, the center buttons must NOT eat the tap — otherwise you could
+   hide the UI but never tap it back (AJ Sep 26 "cant bring it back up"). */
+#web-player .wp-ui.idle .wp-center .wp-btn { pointer-events:none; }
+/* pop-out + cast pinned top-right */
+#web-player .wp-corner { font-size:1.1rem; padding:.4rem .65rem; }
+@media (max-width: 640px) {
+  #web-player .wp-center { gap:1.4rem; }
+  #web-player .wp-center .wp-btn { width:52px; height:52px; font-size:1.4rem; }
+  #web-player .wp-center .wp-pp { width:66px; height:66px; font-size:1.8rem; }
+}
 #web-player .wp-hint { position:absolute; left:0; right:0; bottom:88px; text-align:center; color:#ff9a7a;
                        font-size:.9rem; text-shadow:0 1px 4px #000; }
 #web-player .wp-btn.on { background:var(--accent); }
@@ -383,11 +436,11 @@ select:focus, select:hover { border-color:var(--accent); }
 .lv-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .6rem 0 1rem; }
 .lv-chip { background: #241f3d; color: #cfc9ea; border: 1px solid #3a3560; border-radius: 999px;
   padding: .35rem .9rem; cursor: pointer; font-size: .85rem; }
-.lv-chip.on { background: #7b5bf5; color: #fff; border-color: #7b5bf5; }
+.lv-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .lv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .8rem; }
 .lv-tile { background: #1c1832; border: 1px solid rgba(255,255,255,.06); border-radius: 12px;
   padding: .7rem; cursor: pointer; text-align: center; transition: transform .12s, border-color .12s; }
-.lv-tile:hover { transform: translateY(-2px); border-color: #7b5bf5; }
+.lv-tile:hover { transform: translateY(-2px); border-color: var(--accent); }
 .lv-tile.busy { opacity: .5; pointer-events: none; }
 .lv-logo { height: 64px; display: flex; align-items: center; justify-content: center; font-size: 2rem; }
 .lv-logo img { max-height: 64px; max-width: 90%; object-fit: contain; }
@@ -402,7 +455,7 @@ select:focus, select:hover { border-color:var(--accent); }
 .lvg-chrow { display: grid; grid-template-columns: 200px 1fr 220px 44px; gap: .9rem; align-items: center;
   background: #17132a; border: 1px solid rgba(255,255,255,.05); border-radius: 10px;
   padding: .55rem .8rem; margin-bottom: .45rem; cursor: pointer; }
-.lvg-chrow:hover { border-color: #7b5bf5; }
+.lvg-chrow:hover { border-color: var(--accent); }
 .lvg-chrow.busy { opacity: .5; pointer-events: none; }
 .lvg-ch { display: flex; align-items: center; gap: .6rem; min-width: 0; }
 .lvg-ch img { width: 44px; height: 34px; object-fit: contain; }
@@ -414,14 +467,14 @@ select:focus, select:hover { border-color:var(--accent); }
 .lvg-fill { height: 100%; background: #e63946; border-radius: 3px; }
 .lvg-times { font-size: .7rem; color: #9b93c0; }
 .lvg-next { font-size: .76rem; color: #9b93c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lvg-play { background: #7b5bf5; color: #fff; border: 0; border-radius: 8px; height: 34px; cursor: pointer; }
+.lvg-play { background: var(--accent); color: #fff; border: 0; border-radius: 8px; height: 34px; cursor: pointer; }
 /* in-player guide panel */
 .lv-guidepanel { position: absolute; right: 0; top: 0; bottom: 0; width: 340px; overflow-y: auto;
-  background: rgba(13,11,24,.96); border-left: 1px solid #3a3560; padding: .6rem; z-index: 30; }
+  background: #0d0b18; border-left: 1px solid #3a3560; padding: .6rem; z-index: 30; }
 .lvg-row { padding: .5rem .6rem; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: .15rem; }
 .lvg-row:hover { background: #241f3d; }
 .lvg-row.busy { opacity: .5; }
-.lvg-row .lvg-name { font-size: .85rem; font-weight: 600; }
+.lvg-row .lvg-name { font-size: .85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lvg-row .lvg-now { font-size: .74rem; color: #9b93c0; }
 
 /* ==== CLASSIC EPG GUIDE (AJ Sep 17: "like im on a classic tv box") ==== */
@@ -430,7 +483,7 @@ select:focus, select:hover { border-color:var(--accent); }
 .lvcw-row { display: flex; gap: .6rem; overflow-x: auto; padding-bottom: .3rem; }
 .lvcw-card { flex: 0 0 auto; display: flex; align-items: center; gap: .55rem; background: #241f3d;
   border: 1px solid #3a3560; border-radius: 10px; padding: .5rem .7rem; cursor: pointer; min-width: 180px; max-width: 240px; }
-.lvcw-card:hover { border-color: #7b5bf5; }
+.lvcw-card:hover { border-color: var(--accent); }
 .lvcw-card.busy { opacity: .5; pointer-events: none; }
 .lvcw-card img { width: 34px; height: 34px; object-fit: contain; border-radius: 6px; background: #171232; }
 .lvcw-n { font-size: .82rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -438,9 +491,14 @@ select:focus, select:hover { border-color:var(--accent); }
 .epg { border: 1px solid #2c2749; border-radius: 12px; background: #14102a; overflow: hidden; }
 .epg-scroll { overflow: auto; max-height: calc(100vh - 260px); }
 .epg-hrow, .epg-row { display: flex; width: max-content; border-bottom: 1px solid #221d3e; }
-.epg-hrow { position: sticky; top: 0; z-index: 5; background: #171232; }
-.epg-ch { position: sticky; left: 0; z-index: 3; flex: 0 0 210px; width: 210px; display: flex; align-items: center;
+/* sticky date/time header — FULLY OPAQUE so scrolling channel rows never show through it
+   (AJ Sep 26 "the date and time at the top and everything flows behind it"). z-index 6 sits
+   above every row (rows are z 0) and above the sticky channel column (z 3). */
+.epg-hrow { position: sticky; top: 0; z-index: 6; background: #171232; }
+.epg-ch { position: sticky; left: 0; z-index: 4; flex: 0 0 210px; width: 210px; display: flex; align-items: center;
   gap: .45rem; padding: .45rem .55rem; background: #171232; border-right: 1px solid #2c2749; cursor: pointer; }
+/* the top-left corner is BOTH sticky-top and sticky-left → must win over both */
+.epg-hrow .epg-ch { z-index: 7; }
 .epg-corner { font-size: .74rem; color: #9b93c0; text-transform: uppercase; letter-spacing: .06em; }
 .epg-ch img { width: 30px; height: 30px; object-fit: contain; border-radius: 6px; background: #100d20; }
 .epg-cn { font-size: .8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -449,12 +507,12 @@ select:focus, select:hover { border-color:var(--accent); }
 .epg-fav.on { color: #f5c542; }
 .epg-lane { position: relative; height: 56px; flex: 0 0 auto; background:
   repeating-linear-gradient(90deg, transparent 0, transparent 259px, #221d3e 259px, #221d3e 260px); }
-.epg-hrow .epg-lane { height: 30px; display: flex; background: none; }
+.epg-hrow .epg-lane { height: 30px; display: flex; background: #171232; }  /* opaque, no bleed-through */
 .epg-tick { flex: 0 0 auto; font-size: .72rem; color: #9b93c0; padding: .35rem 0 0 .5rem; border-left: 1px solid #221d3e; }
 .epg-block { position: absolute; top: 5px; bottom: 5px; background: #241f3d; border: 1px solid #322c55;
   border-radius: 8px; padding: .3rem .5rem; overflow: hidden; cursor: pointer; }
-.epg-block:hover { border-color: #7b5bf5; }
-.epg-block.on { background: #33285f; border-color: #7b5bf5; }
+.epg-block:hover { border-color: var(--accent); }
+.epg-block.on { background: #33285f; border-color: var(--accent); }
 .epg-block.dim { opacity: .55; }
 .epg-bt { font-size: .76rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .epg-bs { font-size: .68rem; color: #9b93c0; }
@@ -473,7 +531,7 @@ select:focus, select:hover { border-color:var(--accent); }
 .lvb-row { display: flex; gap: .6rem; overflow-x: auto; padding-bottom: .3rem; }
 .lvb-card { flex: 0 0 auto; min-width: 220px; max-width: 300px; background: #241f3d; border: 1px solid #3a3560;
   border-radius: 10px; padding: .55rem .75rem; cursor: pointer; }
-.lvb-card:hover { border-color: #7b5bf5; }
+.lvb-card:hover { border-color: var(--accent); }
 .lvb-card.live { border-color: #7d2540; background: #2c1830; }
 .lvb-card.busy { opacity: .5; pointer-events: none; }
 .lvb-t { font-size: .84rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -488,6 +546,188 @@ select:focus, select:hover { border-color:var(--accent); }
 /* long channel/programme names stay INSIDE their card (AJ Sep 17 "flo thing running out of the box") */
 .lvcw-card > div { min-width: 0; max-width: 230px; }
 .lvcw-n, .lvcw-p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ============================================================================
+   MOBILE (≤640px) — render the web app like the native phone app: the desktop
+   hover-rail becomes a fixed BOTTOM TAB BAR, tiles/hero/detail size down to
+   phone proportions, Live TV compacts. Desktop/tablet layout is untouched.
+   (AJ Sep 22: "the website on mobile — render like the regular mobile app")
+   ============================================================================ */
+@media (max-width: 640px) {
+  /* --- bottom tab bar (was the left rail) --- */
+  #rail {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    width: 100%; min-width: 0; height: auto;
+    flex-direction: row; justify-content: space-around; align-items: stretch;
+    gap: 0; padding: .3rem .15rem calc(.3rem + env(safe-area-inset-bottom));
+    background: #0D0B18; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    border-top: 1px solid #2a2542; z-index: 50;
+  }
+  #rail:hover { width: 100%; min-width: 0; background: #0D0B18; } /* kill desktop hover-expand, fully opaque */
+  .rail-brand { display: none; }                                    /* no wordmark in a tab bar */
+  .rail-item {
+    flex: 1; min-width: 0; flex-direction: column; gap: .1rem;
+    padding: .35rem .1rem; border-radius: 8px; justify-content: center; text-align: center;
+  }
+  .rail-item .ricon { font-size: 1.3rem; width: auto; filter: none; }
+  .rail-label,
+  #rail:hover .rail-label {                                          /* labels always visible, tiny */
+    opacity: 1; transform: none; font-size: .56rem; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  }
+  .rail-item.on { background: #2a2450; }
+
+  /* profile is NOT a tab on phone — it lives inside Settings, exactly like the native app */
+  #rail-profile { display: none; }
+
+  /* --- content fills width; leave room under the tab bar --- */
+  #shell { height: 100dvh; }
+  .page { padding: .8rem .7rem calc(4.6rem + env(safe-area-inset-bottom)); }
+  .page-pad { padding-top: .2rem; }
+  #playing { bottom: calc(4.6rem + env(safe-area-inset-bottom)); }
+
+  /* --- rows / posters: ~3 across with a peek, phone-sized --- */
+  .row-label { font-size: 1rem; margin: .8rem 0 .4rem; }
+  .strip { gap: .55rem; padding: .25rem .1rem .5rem; }
+  .poster { flex: 0 0 30vw; }
+  .poster img { width: 30vw; height: 45vw; }
+  .poster .pt { width: 30vw; max-width: 30vw; font-size: .72rem; }
+
+  /* --- hero --- */
+  #hero { min-height: 190px; border-radius: 12px; }
+  #hero .hero-body { padding: 1rem; max-width: 100%; }
+  #hero .hero-fade { background: linear-gradient(180deg,#0C0B1400 8%,#0C0B14F2 88%); }
+  #hero h2 { font-size: 1.45rem; }
+  #hero .hero-sub { font-size: .85rem; margin: .3rem 0 .7rem; }
+  #hero .hero-btns { flex-wrap: wrap; }
+
+  /* --- search / discover --- */
+  #search { font-size: 1rem; }
+  .pickers { gap: .5rem; }
+  .pickers select { flex: 1; min-width: 0; }
+
+  /* --- detail page: poster + info side by side, then desc below --- */
+  .d-head { gap: .9rem; margin: .8rem 0; }
+  .d-head img.d-poster { width: 33vw; height: 49.5vw; max-width: 150px; max-height: 225px; flex: 0 0 auto; }
+  .d-head h2 { font-size: 1.3rem; }
+  .d-desc { max-width: 100%; }
+  .d-btns { width: 100%; }
+  .d-btns button { flex: 1 1 auto; }
+
+  /* --- episode page --- */
+  #episode-body { max-width: 100%; padding-top: .5rem; }
+  #episode-body .ep-logo { max-width: 70vw; max-height: 54px; }
+  #episode-body #ep-streams .stream { max-width: 100%; }
+  .ep .ep-thumb img { width: 118px; height: 66px; }
+
+  /* --- Live TV: tighter grid + a 2-column guide (drop the "next" column) --- */
+  .lv-head h2 { font-size: 1.4rem; }
+  .lv-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: .55rem; }
+  .lv-logo { height: 48px; } .lv-logo img { max-height: 48px; }
+  .lvg-chrow { grid-template-columns: 60px minmax(0,1fr) 32px; gap: .5rem; padding: .5rem .6rem; }
+  .lvg-chrow > *:nth-child(3) { display: none; }   /* hide the wide "up next" column on phones */
+  .lvg-ch img { width: 36px; height: 28px; }
+
+  /* --- popovers/cards that had desktop min-widths --- */
+  .auth-card { width: 100%; max-width: 360px; padding: 0 1rem; }
+  .prof-card { min-width: 0; width: 100%; max-width: 360px; }
+  #gate .gate-card { width: 100%; max-width: 340px; }
+}
+
+/* ---- Poster action sheet (native-app long-press menu: Details / Add to Library /
+   Mark watched / Clear Progress). Bottom sheet on phones, centered card on desktop. ---- */
+.ck-sheet-ov { position: fixed; inset: 0; background: #000A; z-index: 60;
+  display: flex; align-items: flex-end; justify-content: center; }
+.ck-sheet { background: #1B1830; width: 100%; max-width: 480px; border-radius: 18px 18px 0 0;
+  padding: .5rem .5rem calc(.6rem + env(safe-area-inset-bottom)); box-shadow: 0 -8px 40px #000C; }
+.ck-sheet-h { font-weight: 800; font-size: .95rem; color: #cfc9ea; padding: .8rem .8rem .55rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ck-sheet-row { display: flex; align-items: center; gap: .85rem; width: 100%; background: transparent;
+  color: #fff; text-align: left; padding: .95rem .8rem; border-radius: 10px; font-size: 1rem; font-weight: 600; }
+.ck-sheet-row:hover, .ck-sheet-row:active { background: #2a2450; }
+.ck-sheet-row.danger { color: #E5484D; }
+.ck-sheet-ic { width: 24px; text-align: center; font-size: 1.15rem; }
+@media (min-width: 641px) { .ck-sheet-ov { align-items: center; } .ck-sheet { border-radius: 16px; } }
+
+/* instant row placeholders — poster-sized so the page scrolls before content lands */
+.skel-tile { flex:0 0 146px; height:219px; border-radius:10px; background:var(--card); opacity:.5; }
+@media (max-width:640px) { .skel-tile { flex-basis:30vw; height:45vw; } }
+
+/* ============================================================================
+   MOBILE LIVE TV (≤700px) — AJ Sep 26: "on web mobile you can hardly scroll or
+   see anything… the channel name card itself is too wide". Two surfaces:
+   the in-player mini guide becomes a finger-friendly sheet, and the page guide
+   grid gets a skinny channel column so the timeline owns the screen.
+   Desktop/tablet (>700px) is untouched.
+   ============================================================================ */
+@media (max-width: 700px) {
+  /* --- in-player mini guide = mobile sheet: near-full width, momentum scroll,
+     44px touch rows. It stops BELOW the top bar and ABOVE the control row, so
+     Back stays reachable and the Guide button stays tappable to dismiss it. --- */
+  .lv-guidepanel { width: 85vw; max-width: 85vw;
+    top: 62px; bottom: 104px;
+    border: 1px solid #3a3560; border-right: 0; border-radius: 14px 0 0 14px;
+    -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  .lv-guidepanel .lvg-row { min-height: 44px; justify-content: center; padding: .55rem .7rem; }
+  .lv-guidepanel .lvg-row .lvg-name { font-size: .92rem; }
+  .lv-guidepanel .lvg-row .lvg-now { font-size: .78rem; }
+
+  /* --- page guide grid: 96px channel column (was 210px), ellipsized names,
+     tighter rows so more channels fit; the timeline pans natively by touch --- */
+  .epg-ch { flex: 0 0 96px; width: 96px; padding: .3rem .35rem; gap: .3rem; }
+  .epg-ch img { width: 20px; height: 20px; }
+  .epg-cn { font-size: .66rem; }
+  .epg-sec { font-size: .62rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .epg-fav { font-size: .85rem; }
+  .epg-lane { height: 48px; }
+  .epg-hrow .epg-lane { height: 26px; }
+  .epg-block { padding: .22rem .4rem; }
+  .epg-scroll { -webkit-overflow-scrolling: touch; max-height: calc(100dvh - 230px); }
+
+  /* --- PHONE-APP PARITY (AJ Sep 26 "mobile web like the mobile app version") ---
+     Page order matches MainActivity buildLiveTvBody: title+region corner → games
+     strips → search → chips → day tabs → ↻ CW strip → app-style guide rows. */
+  #view-livetv .page-pad { max-width: 100%; overflow-x: hidden; }
+  .lv-head h2 { font-size: 1.35rem; }
+  #lv-region { flex: 0 0 auto; padding: .4rem .55rem; font-size: .85rem; }
+  /* genre chips + day tabs = single horizontally scrollable rows, app-style */
+  .lv-chips, .lv-days { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; }
+  .lv-chips::-webkit-scrollbar, .lv-days::-webkit-scrollbar { display: none; }
+  .lv-chips { margin: .35rem 0 .7rem; padding-bottom: .1rem; }
+  .lv-chip { flex: 0 0 auto; padding: .45rem 1rem; font-size: .88rem; }
+  /* games + CW strips: momentum scroll, cards never widen the page */
+  .lvb-row, .lvcw-row { -webkit-overflow-scrolling: touch; }
+  .lvb-card { min-width: 200px; max-width: 78vw; }
+  /* every chip view (Guide / Favorites / Sports / News / catalog / search) drops app-style
+     .lvm-row rows straight into #livetv-grid — so it must stack as a plain block, not a grid */
+  #livetv-grid.lv-grid { display: block; }
+  /* the app's guide ROW — logo | name (gold ★ if faved) + now + thin red progress |
+     "Next: …" — replaces the desktop timeline grid on phones (tap = tune, long-press = ★) */
+  .lvm-list { display: block; padding-bottom: .5rem; }
+  .lvm-sec { background: #1b1636; color: #a08ef0; font-weight: 700; font-size: .72rem;
+    text-transform: uppercase; letter-spacing: .05em; padding: .32rem .6rem; border-radius: 6px;
+    margin: .55rem 0 .35rem; }
+  .lvm-row { display: flex; align-items: center; gap: .6rem; background: #1c1832;
+    border: 1px solid rgba(255,255,255,.04); border-radius: 12px; padding: .55rem .65rem;
+    margin-bottom: .4rem; min-height: 56px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
+  .lvm-row:active { background: #241f3d; }
+  .lvm-row.busy { opacity: .5; pointer-events: none; }
+  .lvm-logo { width: 52px; height: 36px; object-fit: contain; flex: 0 0 auto; }
+  .lvm-mid { flex: 1; min-width: 0; }
+  .lvm-name { font-size: .9rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lvm-star { color: #f5c542; }
+  .lvm-star.off { display: none; }
+  .lvm-now { font-size: .78rem; color: #9b93c0; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; margin-top: .12rem; }
+  .lvm-now.dim { opacity: .7; }
+  .lvm-when { color: #9a8fe8; }
+  .lvm-bar { height: 3px; background: #2a2542; border-radius: 2px; margin: .3rem 1.2rem .05rem 0; }
+  .lvm-bar > div { height: 100%; background: #e63946; border-radius: 2px; }
+  .lvm-next { flex: 0 0 auto; max-width: 34%; font-size: .68rem; color: #9b93c0; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+}
 
 /* ---- iPhone-style type panels (Search + Discover) — AJ Oct 11 ---- */
 .type-panels { display:flex; gap:.5rem; margin:.2rem 0 .4rem; }
@@ -517,12 +757,34 @@ select:focus, select:hover { border-color:var(--accent); }
 .creator-live .cl-title { color:#F2EFFF; font-weight:800; font-size:1.05rem; margin-top:4px;
   overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
 .creator-live .cl-game { color:#8B86A8; font-size:.82rem; }
-.creator-live .cl-watch { align-self:flex-start; margin-top:6px; background:#7B5BF5; color:#fff; border:0;
+.creator-live .cl-watch { align-self:flex-start; margin-top:6px; background:var(--accent); color:#fff; border:0;
   border-radius:20px; padding:.4rem 1.1rem; font-weight:700; cursor:pointer; }
 .creator-player { position:fixed; inset:0; z-index:2000; background:#000; display:flex; flex-direction:column; }
 .creator-player .cp-bar { display:flex; justify-content:space-between; align-items:center; gap:10px;
   padding:.5rem .9rem; background:#15121F; color:#F2EFFF; font-size:.85rem; }
 .creator-player .cp-bar button { background:#2C2649; color:#F2EFFF; border:0; border-radius:16px;
   padding:.35rem .9rem; margin-left:.4rem; font-weight:700; cursor:pointer; }
-.creator-player .cp-bar button.on { background:#7B5BF5; }
+.creator-player .cp-bar button.on { background:var(--accent); }
 .creator-player iframe { flex:1; width:100%; border:0; }
+@media(max-width:620px){ .creator-live{flex-direction:column} .creator-live .cl-frame{width:100%;min-width:0} }
+
+/* ── FULL GUIDE + CORNER VIDEO (Nov 7, TV-app mini-guide parity) ───────────── */
+#web-player video.wp-corner { inset:auto; left:auto; top:22px; right:22px;
+  width:min(430px,46vw); height:auto; aspect-ratio:16/9; z-index:9;
+  border-radius:12px; box-shadow:0 10px 44px rgba(0,0,0,.65);
+  border:1px solid #2e2e3a; cursor:pointer; background:#000; }
+.wp-fullguide { position:absolute; inset:0; z-index:8; background:rgba(9,11,18,.97);
+  display:flex; flex-direction:column; padding:20px 26px; overflow:hidden; }
+.wpg-head { display:flex; align-items:center; gap:12px; padding:2px 0 12px;
+  max-width:calc(100% - min(430px,46vw) - 48px); }
+.wpg-head img { height:34px; max-width:84px; object-fit:contain; }
+.wpg-head b { display:block; font-size:19px; color:#fff; }
+.wpg-head span { color:#9a9aa4; font-size:12.5px; }
+.wpg-body { flex:1; overflow-y:auto; padding-right:10px; max-width:920px; }
+.wpg-body .lvg-row { max-width:none; }
+@media (max-width:700px) {
+  #web-player video.wp-corner { width:48vw; top:12px; right:12px; }
+  .wp-fullguide { padding:12px 14px; }
+  .wpg-head { max-width:calc(100% - 50vw - 16px); }
+  .wpg-head b { font-size:15px; }
+}

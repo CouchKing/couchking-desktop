@@ -5,8 +5,9 @@ const TMDB = 'b05e998c589bf1393c1059bd1d4c5895';
 const CINE = 'https://v3-cinemeta.strem.io';
 let SERVICE = 'https://couchking.app';
 let S = { email: '', token: '', user: '', useg: '', subKey: '', addons: [], state: {}, guest: false, access: null };
-// live identity for the player's 🛟 Report a problem (ck-web.js reads window.ckIdent at send
-// time): a getter so it always reflects the ACTIVE profile without touching S.useg sites. (AJ Oct 17)
+// live identity for the in-window player's 🛟 Report a problem (ck-web.js reads window.ckIdent
+// at send time): a getter so it always reflects the ACTIVE profile without touching the four
+// places S.useg is set. (AJ Oct 17)
 Object.defineProperty(window, 'ckIdent', { get: () => ({ key: S.subKey, user: S.useg }) });
 const APPVER = () => (ck.platform === 'web' ? 'web' : 'desktop') + '-0.9';
 // the app is a NEUTRAL TRACKER SHELL until an account with an assigned service signs in
@@ -74,8 +75,8 @@ async function auth(mode) {
     localStorage.setItem('ck', JSON.stringify({ email: S.email, token: S.token }));
     await bootstrap();
 }
-// Forgot password (Nov 3, parity w/ Android/iOS/web): email → 6-digit code (15 min) →
-// new password. /tvapp/reset returns a fresh token, so success = signed straight in.
+// Forgot password (Nov 3, parity w/ Android/iOS): email → 6-digit code (15 min) → new
+// password. /tvapp/reset returns a fresh token, so success = signed straight in.
 async function forgotPassword() {
     $('auth-error').textContent = '';
     const email = ($('auth-email').value.trim() || prompt('Your account email:') || '').trim().toLowerCase();
@@ -195,8 +196,7 @@ const _lvTune = async (id) => {   // id = full meta id (cklive:espn) → [{url, 
 // the apps show, so a blocked Live TV tune reads the same everywhere.
 function lvBanner(msg, title = 'Live TV locked') {
     // CENTERED CouchKing-panel modal with an OK button (AJ Sep 18: "in the middle of the
-    // screen with an OK button … on firetv, desktop and web"). Title is a param since the
-    // VOD device-limit banner (AJ Oct 16) reuses this exact modal.
+    // screen with an OK button … on firetv, desktop and web").
     document.getElementById('lv-lock')?.remove();
     const scrim = document.createElement('div'); scrim.id = 'lv-lock';
     scrim.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.72);' +
@@ -226,6 +226,18 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
             const favSet = new Set(gd2.favs || []);
             const byId = new Map(gd2.channels.map(c => [c.id, c]));
             guideList = [];
+            // 🔴 Live Now on top (AJ Sep 26): games on right now, same region rules as
+            // the page banner. NON-blocking (AJ: "takes slightly longer to load… the web"):
+            // the fetch must never delay the tune — it lands in the list before the panel
+            // is opened, or on the next open at worst
+            const glRef = guideList;
+            j(`${SERVICE}/live/${S.subKey}/games.json`).then(gm => {
+                const want2 = lvRegion || 'US';
+                const lg = (gm?.sports || []).flatMap(sp => (sp.live || [])
+                    .filter(g => (sp.sport === 'Fútbol' ? want2 === 'UK' : (g.rg || 'US') === want2) && g.chid)
+                    .map(g => ({ id: g.chid, name: `${sp.emoji} ${g.t}`, now: `LIVE • ${g.ch}`, live: true, logo: g.logo || '' })));
+                if (lg.length) glRef.unshift({ hdr: '🔴 Live now' }, ...lg);
+            }).catch(() => {});
             if (gd2.favChannels?.length) {
                 guideList.push({ hdr: '★ Favorites' });
                 for (const c of gd2.favChannels) guideList.push({ id: 'cklive:' + c.id, name: c.name, now: nowOf(c), logo: c.logo || '' });
@@ -277,10 +289,10 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
         // watch (AJ Sep 17 "loading screen … that they are going to watch")
         const ci = (_lvGuideCache.d?.channels || []).find(c => 'cklive:' + c.id === id);
         const nowP = ci?.progs?.find(p => p.s <= Date.now() && p.e > Date.now());
-        // LAST CHANNEL seed (AJ Oct 27, parity w/ web): the most-recently-tuned channel that
-        // ISN'T the one we're opening = the "last channel" for the in-player ↩ recall button.
-        // recent[] is server-side (lvrec, key-level) so it's already synced across devices —
-        // the ↩ works even on a cold open before any in-session hop.
+        // LAST CHANNEL seed (AJ Oct 27): the most-recently-tuned channel that ISN'T the one we're
+        // opening = the "last channel" for the in-player ↩ recall button. recent[] is server-side
+        // (lvrec, key-level) so it's already synced across web/iOS/TV — the ↩ works even on a cold
+        // open before any in-session hop. Also stashed locally for an instant resume on reload.
         let _lastCh = '', _lastName = '', _lastLogo = '';
         {
             const _rec = _lvGuideCache.d?.recent || [];
@@ -295,7 +307,7 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
                        lastCh: _lastCh, lastName: _lastName, lastLogo: _lastLogo,
                        onFav: async (cid, on) => {
                            await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(String(cid).replace(/^cklive:/, ""))}&on=${on ? 1 : 0}&p=${encodeURIComponent(S.pid || "")}`, { method: 'POST' });
-                           _lvGuideCache.at = 0;
+                           _lvGuideBust();
                        },
                        guide: guideList, onTune: async (cid) => {
                            const st = await _lvTune(cid);
@@ -312,21 +324,72 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
 let _lvGuideCache = { at: 0, d: null };
 let lvDay = 0;   // guide day tab: 0=Today 1=Tomorrow 2=day after
 let lvShowAll = false;   // guide renders 150 rows fast, expands on demand
+// STALE-WHILE-REVALIDATE guide (AJ Sep 26 "web guide loads slower than the apps"):
+// guide.json (~600 channels, 96h) refetched through the Cloudflare apex on every visit,
+// and the in-memory cache dies on reload. Persist the last copy per region+profile in
+// localStorage — a reload paints from it INSTANTLY (rows compute now/next from the clock
+// at render, so an hours-old copy still reads right) while a background fetch refreshes
+// memory + storage for the next paint. The games banner (lvRenderBanner) has its own
+// fetch and is NEVER served stale.
+const _lvGuideLSKey = () => `ckGuide:${lvRegion || 'US'}:${S.pid || ''}`;
+function _lvGuideBust() {   // fav toggles: kill memory AND every stored copy so stars never lag
+    _lvGuideCache.at = 0;
+    try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith('ckGuide:')) localStorage.removeItem(k);
+        }
+    } catch {}
+}
+let _lvGuideInflight = null;
+function _lvGuideFetch() {   // one server round-trip at a time; lands in memory + localStorage
+    if (_lvGuideInflight) return _lvGuideInflight;
+    const rg = lvRegion, key = _lvGuideLSKey();
+    _lvGuideInflight = (async () => {
+        try {
+            const d = await j(`${SERVICE}/live/${S.subKey}/guide.json?p=${encodeURIComponent(S.pid || "")}${rg ? "&r=" + rg : ""}`);
+            if (d?.channels?.length) {
+                if (rg === lvRegion) _lvGuideCache = { at: Date.now(), d, r: rg };
+                // a 600-channel guide can blow the localStorage quota — then just skip persisting
+                try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), d })); } catch {}
+            }
+        } finally { _lvGuideInflight = null; }
+    })();
+    return _lvGuideInflight;
+}
 async function lvGuideData() {   // one fetch per region per minute, shared by guide + section chips
-    let d = _lvGuideCache.r === lvRegion ? _lvGuideCache.d : null;
-    if (!d || Date.now() - _lvGuideCache.at > 55e3) {
-        d = await j(`${SERVICE}/live/${S.subKey}/guide.json?p=${encodeURIComponent(S.pid || "")}${lvRegion ? "&r=" + lvRegion : ""}`);
-        if (d?.channels?.length) _lvGuideCache = { at: Date.now(), d, r: lvRegion };
+    const d = _lvGuideCache.r === lvRegion ? _lvGuideCache.d : null;
+    if (d && Date.now() - _lvGuideCache.at <= 55e3) return d;
+    if (!d) {   // cold load (reload/new tab): a stored copy < 20h old renders NOW, refresh rides behind
+        let stored = null;
+        try {
+            const c = JSON.parse(localStorage.getItem(_lvGuideLSKey()) || 'null');
+            if (c?.d?.channels?.length && Date.now() - c.at < 20 * 3600e3) stored = c.d;
+        } catch {}
+        if (stored) {
+            _lvGuideCache = { at: Date.now(), d: stored, r: lvRegion };
+            _lvGuideFetch();   // background revalidate — the NEXT render/visit uses the fresh copy
+            return stored;
+        }
     }
+    await _lvGuideFetch();
     return _lvGuideCache.r === lvRegion ? _lvGuideCache.d : null;
 }
+let _lvRenderGen = 0;   // bumped on every page/guide re-render — orphans stale chunk pumps
 async function lvRenderGuide(grid) {
+    const gen = ++_lvRenderGen;
     const d = await lvGuideData();
+    if (gen !== _lvRenderGen) return;   // user re-rendered (chip/day/region) while data loaded
     if (!d?.channels?.length) {   // addon mid-restart or first boot — auto-retry, never dead-end
         grid.innerHTML = '<div class="lv-loading">Loading the guide…</div>';
-        setTimeout(() => { if (page === 'livetv' && lvGenre === 'Guide') lvRenderGuide(grid); }, 3000);
+        setTimeout(() => { if (gen === _lvRenderGen && page === 'livetv' && lvGenre === 'Guide') lvRenderGuide(grid); }, 3000);
         return;
     }
+    // PHONE (≤700px) renders the ANDROID APP's guide rows — logo | name (gold ★ if faved) |
+    // now-playing + thin red progress | "Next: …" — instead of the desktop timeline grid,
+    // which fought the phone width (AJ Sep 26 "mobile web like the mobile app version").
+    // Desktop/tablet (>700px) keeps the classic shared-timeline EPG untouched.
+    const mob = matchMedia('(max-width:700px)').matches;
     const favs = new Set(d.favs || []);
     const now = Date.now(), SLOTW = 260;
     // day tabs (AJ: "scroll through the guide and see upcoming stuff"): Today = from the
@@ -350,14 +413,16 @@ async function lvRenderGuide(grid) {
         return `<button class="lv-chip${o === lvDay ? ' on' : ''}" data-day="${o}">${label}</button>`;
     }).join('') + '</div>';
     if (rec.length && lvDay === 0) {
-        h += `<div class="lvcw"><div class="lvcw-t">Continue watching — Live TV</div><div class="lvcw-row">` + rec.map(c => {
+        h += `<div class="lvcw"><div class="lvcw-t">${mob ? '↻ Continue watching' : 'Continue watching — Live TV'}</div><div class="lvcw-row">` + rec.map(c => {
             const nowP = c.progs.find(p => p.s <= now && p.e > now);
             return `<div class="lvcw-card" data-ch="${esc(c.id)}" data-n="${esc(c.name)}">${c.logo ? `<img src="${esc(c.logo)}" onerror="this.style.display='none'">` : ''}<div><div class="lvcw-n">${esc(c.name)}</div><div class="lvcw-p">${esc(nowP?.t || 'Live')}</div></div></div>`;
         }).join('') + `</div></div>`;
     }
-    let ticks = '';
-    for (let i = 0; i < SLOTS; i++) ticks += `<div class="epg-tick" style="width:${SLOTW}px">${fmtT(t0 + i * 1800e3)}</div>`;
-    h += `<div class="epg"><div class="epg-scroll"><div class="epg-hrow"><div class="epg-ch epg-corner">${new Date(t0).toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"})}</div><div class="epg-lane" style="width:${SLOTS * SLOTW}px">${ticks}</div></div>`;
+    if (!mob) {   // phones never pay for 144 tick cells they'll never show
+        let ticks = '';
+        for (let i = 0; i < SLOTS; i++) ticks += `<div class="epg-tick" style="width:${SLOTW}px">${fmtT(t0 + i * 1800e3)}</div>`;
+        h += `<div class="epg"><div class="epg-scroll"><div class="epg-hrow"><div class="epg-ch epg-corner">${new Date(t0).toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"})}</div><div class="epg-lane" style="width:${SLOTS * SLOTW}px">${ticks}</div></div>`;
+    }
     const rowHtml = (c) => {
         const progs = (c.progs || []).filter(p => p.e > t0 && p.s < tEnd);
         let blocks = '';
@@ -372,49 +437,127 @@ async function lvRenderGuide(grid) {
             <div class="epg-lane" style="width:${SLOTS * SLOTW}px">${lvDay ? '' : `<div class="epg-nowline" style="left:${x(now)}px"></div>`}${blocks}</div></div>`;
     };
     const secHdr = (t) => `<div class="epg-sechdr"><div class="epg-ch epg-sec">${esc(t)}</div><div class="epg-lane epg-seclane" style="width:${SLOTS * SLOTW}px"></div></div>`;
+    // ---- phone-app row + section header (mirrors MainActivity liveRow / secHdr) ----
+    const mobSecHdr = (t) => `<div class="lvm-sec">${esc(t)}</div>`;
+    const mobRowHtml = (c) => {
+        // Today rows read from NOW; future day tabs read from that day's 6 AM window
+        // (row mode has no timeline to scrub, so the tab picks the reference time)
+        const T = lvDay ? t0 : now;
+        let nowP = null, nextP = null;
+        for (const p of (c.progs || [])) {
+            if (p.s <= T && p.e > T) nowP = p;
+            else if (p.s > T) { nextP = p; break; }
+        }
+        const pct = (!lvDay && nowP) ? Math.min(100, Math.max(0, 100 * (now - nowP.s) / (nowP.e - nowP.s))) : 0;
+        // marathon 24/7 "programmes" (>4h) get a dim bar, same rule as the desktop rows
+        const longProg = nowP && (nowP.e - nowP.s) >= 4 * 3600e3;
+        return `<div class="lvm-row" data-ch="${esc(c.id)}" data-n="${esc(c.name)}">
+            ${c.logo ? `<img class="lvm-logo" loading="lazy" src="${esc(c.logo)}" onerror="this.style.visibility='hidden'">` : '<div class="lvm-logo"></div>'}
+            <div class="lvm-mid">
+                <div class="lvm-name"><span class="lvm-star${favs.has(c.id) ? '' : ' off'}">★ </span>${esc(c.name)}</div>
+                <div class="lvm-now${nowP ? '' : ' dim'}">${nowP ? esc(nowP.t) : 'Live programming'}${lvDay && nowP ? ` <span class="lvm-when">• ${fmtT(nowP.s)}</span>` : ''}</div>
+                ${(!lvDay && nowP) ? `<div class="lvm-bar"><div style="width:${pct}%${longProg ? ';opacity:.3' : ''}"></div></div>` : ''}
+            </div>
+            ${nextP ? `<div class="lvm-next">Next: ${esc(nextP.t)} • ${fmtT(nextP.s)}</div>` : ''}
+        </div>`;
+    };
     // ★ favorites first as their own section, then the lineup grouped by section
     // (USA: Sports/News/Kids/Movies/Entertainment; UK/CA: the provider's own sub-groups)
     const favRows = chans.filter(c => favs.has(c.id));
     const rest = chans.filter(c => !favs.has(c.id));
-    if (favRows.length) { h += secHdr('★ Favorites'); for (const c of favRows) h += rowHtml(c); }
     // 500 (was 150): games ride at the BOTTOM of the grid now (AJ Sep 25) — a 150 cap
-    // would hide them behind the Show-all click; ~330 HTML rows render fine
+    // would hide them behind the Show-all click. Phone was uncapped, but the lineup grew to
+    // ~1500 channels (AJ Oct 18 "more channels") and 1500 DOM rows froze phone scrolling, so
+    // the phone now caps at 500 too with its own Show-all tail (AJ Oct 18 "guide scrolling
+    // also broke on mobile").
     const LIMIT = lvShowAll ? Infinity : 500;
+    const entries = [];   // string = section header, object = channel row
+    if (favRows.length) { entries.push('★ Favorites'); for (const c of favRows) entries.push(c); }
     let lastSec = null, shown = 0;
     for (const c of rest) {
         if (shown >= LIMIT) break;
         const sec = c.section || 'More Channels';
-        if (sec !== lastSec) { h += secHdr(sec); lastSec = sec; }
-        h += rowHtml(c); shown++;
+        if (sec !== lastSec) { entries.push(sec); lastSec = sec; }
+        entries.push(c); shown++;
     }
-    if (rest.length > shown) h += `<div class="epg-more"><button id="epg-showall" class="lv-chip">Show all ${rest.length} channels</button></div>`;
-    h += `</div></div>`;
+    const entryHtml = (e) => typeof e === 'string' ? (mob ? mobSecHdr(e) : secHdr(e)) : (mob ? mobRowHtml(e) : rowHtml(e));
+    // CHUNKED RENDER (AJ Sep 26 "web still takes too long to load the guide"): building
+    // all ~600 channel rows as ONE synchronous innerHTML froze the tab for seconds before
+    // anything painted — the fetch was never the cost, the DOM was. Now the shell (day
+    // tabs, CW strip, time header) + the FIRST 30 rows paint immediately; the rest streams
+    // in behind the paint in batches of 25 (setTimeout 0 between batches = the browser
+    // paints and handles scroll/clicks in the gaps). Appends land at the BOTTOM so the
+    // scroll position never moves, the time header is CSS-sticky inside .epg-scroll so it
+    // pins correctly however many rows exist, and every row carries its own red now-line.
+    const FIRST = 30, CHUNK = 25;
+    let bi = 0, firstHtml = '';
+    for (; bi < Math.min(FIRST, entries.length); bi++) firstHtml += entryHtml(entries[bi]);
+    h += mob ? `<div class="lvm-list">${firstHtml}</div>` : firstHtml + `</div></div>`;
     grid.innerHTML = h;
+    const host = grid.querySelector(mob ? '.lvm-list' : '.epg-scroll');
+    const finish = () => {   // Show-all tail rides after the last chunk (desktop + phone now)
+        if (rest.length > shown)
+            host.insertAdjacentHTML('beforeend', `<div class="epg-more"><button id="epg-showall" class="lv-chip">Show all ${rest.length} channels</button></div>`);
+    };
+    const pump = () => {
+        // stale-loop guard: a chip/day/region click re-rendered the page — stop writing
+        if (gen !== _lvRenderGen || !host.isConnected) return;
+        let hh = '';
+        const end = Math.min(bi + CHUNK, entries.length);
+        for (; bi < end; bi++) hh += entryHtml(entries[bi]);
+        host.insertAdjacentHTML('beforeend', hh);
+        if (bi < entries.length) setTimeout(pump, 0);
+        else finish();
+    };
+    if (bi < entries.length) requestAnimationFrame(() => setTimeout(pump, 0));   // first frame paints before batch 2
+    else finish();
     // the corner date FOLLOWS the scroll — crossing midnight flips it to the next day
     // (AJ Sep 18 "i'm scrolling and don't know what day i'm on")
-    {
+    if (!mob) {
         const sc = grid.querySelector('.epg-scroll'), corner = grid.querySelector('.epg-corner');
         if (sc && corner) sc.addEventListener('scroll', () => {
             corner.textContent = new Date(t0 + (sc.scrollLeft / SLOTW) * 1800e3)
                 .toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
         }, { passive: true });
     }
-    grid.querySelectorAll('[data-day]').forEach(el => el.onclick = (ev) => {
-        ev.stopPropagation(); lvDay = +el.dataset.day; lvRenderGuide(grid);
-    });
-    const sa = grid.querySelector('#epg-showall');
-    if (sa) sa.onclick = (ev) => { ev.stopPropagation(); lvShowAll = true; lvRenderGuide(grid); };
-    grid.querySelectorAll('[data-ch]').forEach(el => el.onclick = (ev) => {
-        if (ev.target.closest('[data-fav]')) return;
-        _lvPlayCh('cklive:' + el.dataset.ch, el.dataset.n, guideList, el);
-    });
-    grid.querySelectorAll('[data-fav]').forEach(el => el.onclick = async (ev) => {
-        ev.stopPropagation();
-        const on = !el.classList.contains('on');
-        el.classList.toggle('on', on);
-        await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(el.dataset.fav)}&on=${on ? 1 : 0}&p=${encodeURIComponent(S.pid || "")}`, { method: 'POST' });
-        _lvGuideCache.at = 0;   // re-pin on next render
-    });
+    // ONE delegated click handler — per-row wiring can't reach rows that land in later
+    // chunks; delegation covers every chunk (and the day tabs / Show-all / ★ stars)
+    grid.onclick = (ev) => {
+        const day = ev.target.closest('[data-day]');
+        if (day) { ev.stopPropagation(); lvDay = +day.dataset.day; lvRenderGuide(grid); return; }
+        if (ev.target.closest('#epg-showall')) { ev.stopPropagation(); lvShowAll = true; lvRenderGuide(grid); return; }
+        const fv = ev.target.closest('[data-fav]');
+        if (fv) {
+            ev.stopPropagation();
+            const on = !fv.classList.contains('on');
+            fv.classList.toggle('on', on);
+            _lvFavSet(fv.dataset.fav, on);
+            return;
+        }
+        const chEl = ev.target.closest('[data-ch]');
+        if (chEl) {
+            if (chEl._lvLP) { chEl._lvLP = false; return; }   // that tap was a long-press fav
+            _lvPlayCh('cklive:' + chEl.dataset.ch, chEl.dataset.n, guideList, chEl);
+        }
+    };
+    // app parity: LONG-PRESS a row to ★ / un★ it — the phone app's fav gesture
+    grid.oncontextmenu = grid.ontouchstart = grid.ontouchmove = grid.ontouchend = grid.ontouchcancel = null;
+    if (mob) {
+        let lpT = 0;
+        grid.ontouchstart = (ev) => {
+            const r = ev.target.closest('.lvm-row'); if (!r) return;
+            clearTimeout(lpT);
+            lpT = setTimeout(() => {
+                r._lvLP = true;   // swallow the click some browsers fire after a long-press
+                const on = !(_lvGuideCache.d?.favs || []).includes(r.dataset.ch);
+                r.querySelector('.lvm-star')?.classList.toggle('off', !on);
+                toast(on ? '★ Added to favorites' : 'Removed from favorites');
+                _lvFavSet(r.dataset.ch, on);
+            }, 550);
+        };
+        grid.ontouchmove = grid.ontouchend = grid.ontouchcancel = () => clearTimeout(lpT);
+        grid.oncontextmenu = (ev) => { if (ev.target.closest('.lvm-row')) ev.preventDefault(); };
+    }
 }
 // LIVE GAMES BANNER (AJ: "live banner with games live now… only if they are active real
 // games, dont just give me more panels"): sport strips appear ONLY when that sport has a
@@ -423,7 +566,7 @@ let lvRegion = '';
 async function lvRenderBanner(el) {
     const d = await j(`${SERVICE}/live/${S.subKey}/games.json`);
     const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-    // 🔴 creator-live banner pinned at the TOP of Live TV (only when AJ streams)
+    // 🔴 creator-live banner pinned at the TOP of the Live TV view (only when AJ streams)
     const addCreator = () => { const cb = document.createElement('div'); el.insertBefore(cb, el.firstChild); creatorBanner(cb); };
     if (!d?.sports?.length) { el.innerHTML = ''; addCreator(); return; }
     // REGION-AWARE (AJ Sep 17): Fútbol rides with the UK view (it's not American sports);
@@ -471,13 +614,9 @@ async function lvRenderUpcoming(grid) {
 }
 // favorite toggle from anywhere a row shows (AJ Sep 17: "favorite … if i search it
 // because its hard to find") — server remembers per key, guide pins them
-async function _lvFavToggle(chid, btn) {
-    const id = String(chid).replace(/^cklive:/, '');
-    const on = !btn.classList.contains('on');
-    btn.classList.toggle('on', on);
-    btn.textContent = on ? '★' : '☆';
-    // patch the cache IN PLACE so every view agrees instantly — waiting on the next
-    // fetch made a fresh star look broken (AJ Sep 17 "doesn't add until i refresh")
+// shared fav write: patch the cache IN PLACE so every view agrees instantly — waiting on
+// the next fetch made a fresh star look broken (AJ Sep 17 "doesn't add until i refresh")
+async function _lvFavSet(id, on) {
     const d0 = _lvGuideCache.d;
     if (d0) {
         d0.favs = (d0.favs || []).filter(x => x !== id);
@@ -489,13 +628,25 @@ async function _lvFavToggle(chid, btn) {
         }
     }
     await j(`${SERVICE}/live/${S.subKey}/fav?id=${encodeURIComponent(id)}&on=${on ? 1 : 0}&p=${encodeURIComponent(S.pid || "")}`, { method: 'POST' });
-    _lvGuideCache.at = 0;   // still refetch soon for server truth
+    _lvGuideBust();   // still refetch soon for server truth
+}
+async function _lvFavToggle(chid, btn) {
+    const id = String(chid).replace(/^cklive:/, '');
+    const on = !btn.classList.contains('on');
+    btn.classList.toggle('on', on);
+    btn.textContent = on ? '★' : '☆';
+    await _lvFavSet(id, on);
 }
 const _lvIsFav = chid => (_lvGuideCache.d?.favs || []).includes(String(chid).replace(/^cklive:/, ''));
 // one channel row: logo | now-playing + progress | next | ★ | ▶  (sections, search, favs)
+// PHONE (≤700px) renders the ANDROID APP's stacked row (.lvm-row) — logo | name (gold ★ if
+// faved) + now + thin red progress | "Next: …", tap = tune, long-press = ★ — so EVERY chip
+// view (Favorites / Sports / News / catalog / search), not just Guide, feels like the app
+// (AJ Sep 26 "mobile live tv nothing like the app version"). Desktop keeps .lvg-chrow.
 function _lvRow(grid, m, guideList) {
     const fmtT = ms => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     const g = m.ckGuide || {};
+    if (matchMedia('(max-width:700px)').matches) return _lvRowMobile(grid, m, g, guideList, fmtT);
     const r = document.createElement('div'); r.className = 'lvg-chrow';
     const pct = g.now?.s && g.now?.e ? Math.min(100, Math.max(0, 100 * (Date.now() - g.now.s) / (g.now.e - g.now.s))) : 0;
     // every row keeps its progress bar, but marathon 24/7 "programmes" (>4h) get a DIM
@@ -523,19 +674,61 @@ function _lvRow(grid, m, guideList) {
     r.onclick = () => _lvPlayCh(m.id, m.name, guideList, r);
     grid.appendChild(r);
 }
+// PHONE app-style row (mirrors MainActivity.liveRow + the Guide's mobRowHtml): full-width,
+// ~56px, logo left, gold ★ before name when faved, now-playing + thin red progress bar,
+// "Next: …" on the right. Tap tunes, long-press toggles ★. Same .lvm-* CSS as the Guide.
+function _lvRowMobile(grid, m, g, guideList, fmtT) {
+    const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const cid = String(m.id).replace(/^cklive:/, '');
+    const fav = _lvIsFav(m.id);
+    const now = g.now, next = g.next;
+    const pct = (now?.s && now?.e) ? Math.min(100, Math.max(0, 100 * (Date.now() - now.s) / (now.e - now.s))) : 0;
+    const longProg = now?.s && now?.e && (now.e - now.s) >= 4 * 3600e3;
+    const r = document.createElement('div');
+    r.className = 'lvm-row'; r.dataset.ch = cid; r.dataset.n = m.name;
+    r.innerHTML = `${m.poster ? `<img class="lvm-logo" loading="lazy" src="${esc(m.poster)}" onerror="this.style.visibility='hidden'">` : '<div class="lvm-logo"></div>'}
+        <div class="lvm-mid">
+            <div class="lvm-name"><span class="lvm-star${fav ? '' : ' off'}">★ </span>${esc(m.name)}</div>
+            <div class="lvm-now${now ? '' : ' dim'}">${now ? esc(now.t) : 'Live programming'}</div>
+            ${now ? `<div class="lvm-bar"><div style="width:${pct}%${longProg ? ';opacity:.3' : ''}"></div></div>` : ''}
+        </div>
+        ${next ? `<div class="lvm-next">Next: ${esc(next.t)}${next.s ? ` • ${fmtT(next.s)}` : ''}</div>` : ''}`;
+    // tap = tune (unless the tap was the long-press that just fired a fav toggle)
+    r.onclick = () => { if (r._lvLP) { r._lvLP = false; return; } _lvPlayCh(m.id, m.name, guideList, r); };
+    let lpT = 0;
+    r.ontouchstart = () => { clearTimeout(lpT); lpT = setTimeout(() => {
+        r._lvLP = true;
+        const on = !_lvIsFav(m.id);
+        r.querySelector('.lvm-star')?.classList.toggle('off', !on);
+        toast(on ? '★ Added to favorites' : 'Removed from favorites');
+        _lvFavSet(cid, on);
+    }, 550); };
+    r.ontouchmove = r.ontouchend = r.ontouchcancel = () => clearTimeout(lpT);
+    r.oncontextmenu = (ev) => ev.preventDefault();
+    grid.appendChild(r);
+}
+let _lvLockChk = { at: 0, d: null };
 async function livetvPage() {
     if (!S.liveCat) return;
     const chips = $('livetv-chips'), grid = $('livetv-grid');
     const sel = $('lv-region');
+    // page re-render (chip/region/search-clear): orphan any in-flight guide chunk pump and
+    // drop the old view's delegated handlers before new content lands
+    _lvRenderGen++;
+    grid.onclick = grid.oncontextmenu = grid.ontouchstart = grid.ontouchmove = grid.ontouchend = grid.ontouchcancel = null;
     // LOCKED (Live TV not on this plan, AJ Sep 18): a big centered banner, nothing else —
     // no chips, no guide, no clickable tiles. The catalog returns a single cklive:upgrade
-    // marker when the key isn't entitled.
-    const lockChk = await j(S.liveCat.base + `/catalog/tv/${S.liveCat.cat.id}.json`);
+    // marker when the key isn't entitled. Verdict memoized 5 min — this probe round-tripped
+    // the addon on EVERY chip click and held the whole page hostage to the network.
+    if (!_lvLockChk.d || Date.now() - _lvLockChk.at > 300e3)
+        _lvLockChk = { at: Date.now(), d: await j(S.liveCat.base + `/catalog/tv/${S.liveCat.cat.id}.json`) };
+    const lockChk = _lvLockChk.d;
     if ((lockChk?.metas || []).length === 1 && lockChk.metas[0].id === 'cklive:upgrade') {
         if (sel) sel.style.display = 'none';
         const bn = $('livetv-banner'); if (bn) bn.innerHTML = '';
+        document.getElementById('lv-msearch')?.remove();
         chips.innerHTML = '';
-        grid.innerHTML = `<div style="min-height:60vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px;padding:2rem">
+        grid.innerHTML = `<div style="min-height:78vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px;padding:2rem">
             <div style="font-size:56px">🔒</div>
             <div style="font-size:26px;font-weight:800">CouchKing Live TV — Locked</div>
             <div style="font-size:15px;color:#9a9aa4;max-width:420px">Live TV isn't part of your plan. Contact support to unlock it.</div></div>`;
@@ -543,6 +736,9 @@ async function livetvPage() {
     }
     if (sel) sel.style.display = '';
     if (sel && !sel._wired) { sel._wired = 1; sel.onchange = () => { lvRegion = sel.value; lvGenre = 'Guide'; lvShowAll = false; livetvPage(); }; }
+    // REGION LIST from the guide payload (AJ Oct 17 "web doesnt even have the countries, its
+    // behind"): the HTML only hard-coded USA/UK/Canada. The guide.json carries the full list
+    // of provider countries (code+label+flag) — rebuild the dropdown from it, like the TV app.
     if (sel) lvGuideData().then(d => {
         const regs = d && d.regions;
         if (!Array.isArray(regs) || !regs.length || sel._regFilled) return;
@@ -572,6 +768,7 @@ async function livetvPage() {
     // SEARCH channels + shows (AJ Sep 17): server matches channel names AND anything in
     // the next 24h of guide. Renders into the grid only — the input never rebuilds, so
     // typing keeps focus.
+    document.getElementById('lv-msearch')?.remove();
     const sin = document.createElement('input');
     sin.type = 'search'; sin.placeholder = '🔎 Channels & shows';
     sin.style.cssText = 'background:#1c1c22;border:1px solid #3a3a44;border-radius:16px;padding:6px 14px;color:#fff;min-width:190px;font-size:14px;outline:none';
@@ -585,14 +782,20 @@ async function livetvPage() {
         const gl = metas.map(m => ({ id: m.id, name: m.name, now: '' }));
         for (const m of metas) {
             _lvRow(grid, m, gl);
-            if (m.ckHit) {   // show-title hit: say WHY this channel matched
-                const el = grid.lastChild.querySelector('.lvg-next');
-                el.textContent = (m.ckHit.live ? '🔴 ON NOW: ' : '📅 ') + m.ckHit.t + (m.ckHit.when ? ' • ' + m.ckHit.when : '');
-                if (m.ckHit.live) el.style.color = '#e64545';
+            if (m.ckHit) {   // show-title hit: say WHY this channel matched (app + desktop rows)
+                const hit = (m.ckHit.live ? '🔴 ON NOW: ' : '📅 ') + m.ckHit.t + (m.ckHit.when ? ' • ' + m.ckHit.when : '');
+                const el = grid.lastChild.querySelector('.lvg-next') || grid.lastChild.querySelector('.lvm-now');
+                if (el) { el.textContent = hit; el.classList.remove('dim'); if (m.ckHit.live) el.style.color = '#e64545'; }
             }
         }
     }, 350); };
-    chips.appendChild(sin);
+    // PHONE ORDER = the app exactly (AJ Sep 26): title/region → games strips → SEARCH →
+    // chips → day tabs → CW → guide. Desktop keeps the search inside the chips row.
+    if (matchMedia('(max-width:700px)').matches) {
+        sin.id = 'lv-msearch';
+        sin.style.cssText += ';display:block;width:100%;max-width:none;min-width:0;margin:.15rem 0 .5rem';
+        banner ? banner.after(sin) : chips.before(sin);
+    } else chips.appendChild(sin);
     if (lvGenre === 'Guide') return lvRenderGuide(grid);
     if (lvGenre === '📅 Upcoming') return lvRenderUpcoming(grid);
     const now = Date.now();
@@ -720,6 +923,10 @@ const IMG = (p, w = 342) => p ? (p.startsWith('http') ? p : `https://image.tmdb.
 // tile = EXACT Firestick card: white bar on a dark track flush at the poster's bottom
 // (only 2–97%), purple ✓ top-right = My List, yellow eye top-left = watched, "+N" =
 // new episodes aired since last watched, single-line ELLIPSIZED centered title below
+// A home/catalog tile often comes from TMDB (has t.tmdb, NO imdb t.id) while marks are stored
+// by imdb id — so id-only matching left every TMDB home tile badge-less (AJ Sep 18: "homepage
+// doesn't have watched/library marks on anything"). Fall back to name+type, which BOTH the
+// watchlist and watchedTitles carry, so existing marks light up without any re-marking.
 function markState(t) {
     const st = pstate();
     const nm = (t.name || '').toLowerCase().trim();
@@ -745,12 +952,25 @@ function posterEl(t, opts = {}) {
         + (hasBar ? `<div class="bar"><div style="width:${opts.pct}%"></div></div>` : '')
         + `</div>`
         + (PREF('titles', true) ? `<div class="pt" title="${(t.name || '').replace(/"/g, '&quot;')}">${t.name || ''}</div>` : '');
-    d.onclick = (e) => { if (!e.target.classList.contains('cw-x')) detail(t); };
+    d.onclick = (e) => {
+        if (d._lp) { d._lp = false; return; }                 // long-press already handled it
+        if (!e.target.classList.contains('cw-x')) detail(t);
+    };
     if (opts.removable) d.querySelector('.cw-x').onclick = () => removeContinue(t, d);
+    // long-press (touch) / right-click (desktop) → native-style action sheet
+    d.oncontextmenu = (e) => { e.preventDefault(); titleMenu(t); };
+    let lpTimer = null;
+    const cancelLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+    d.addEventListener('touchstart', () => { lpTimer = setTimeout(() => { d._lp = true; titleMenu(t); }, 500); }, { passive: true });
+    d.addEventListener('touchmove', cancelLp, { passive: true });
+    d.addEventListener('touchend', cancelLp);
+    d.addEventListener('touchcancel', cancelLp);
     d._ckT = t;   // the badge-refresh pass needs the tile's identity
     return d;
 }
-function removeContinue(t, el) {
+// Clear a title's Continue-Watching entry + progress everywhere (server merge honors the
+// tombstones). Shared by the Continue-row ✕ AND the long-press "Clear Progress" action.
+function clearProgress(t) {
     if (S.guest) return;
     const st = pstate();
     st.continue = (st.continue || []).filter(x => x.id !== t.id);
@@ -762,8 +982,68 @@ function removeContinue(t, el) {
     for (const k of Object.keys(pos)) if (k === t.id || k.startsWith(t.id + ':')) {
         st.removedTs = stamp(st.removedTs, 'pos:' + k); delete pos[k];
     }
-    el.remove(); pushAccount();
+    pushAccount();
     j(`${SERVICE}/player/clear`, { method: 'POST', body: { k: S.subKey, u: S.useg, i: t.id } });
+}
+function removeContinue(t, el) { if (S.guest) return; clearProgress(t); el.remove(); }
+
+// Repaint the ✓ list / ✓ watched badges on every visible tile in place (after a long-press
+// toggle) — same logic the 60s sync pass uses, factored out so actions reflect instantly.
+function repaintBadges() {
+    try {
+        document.querySelectorAll('.poster').forEach(po => {
+            const t = po._ckT;
+            if (!t || po.querySelector('.cw-x')) return;   // CW row keeps its ✕, no badges
+            const wrap = po.querySelector('.pwrap'); if (!wrap) return;
+            const { inList, isDone } = markState(t);
+            const want = (cls, on, txt) => {
+                let el = wrap.querySelector('.' + cls);
+                if (on && !el) { el = document.createElement('div'); el.className = cls; el.textContent = txt; wrap.appendChild(el); }
+                if (!on && el) el.remove();
+            };
+            want('badge-list', inList, '✓');
+            want('badge-done', isDone, '✓');
+        });
+    } catch {}
+}
+
+// Native-app poster long-press menu (MainActivity titleMenu): Details / Add|Remove Library /
+// Mark Watched|Unwatched / Clear Progress. Opened by long-press (touch) or right-click.
+async function titleMenu(t) {
+    if (S.guest) return gate('Your list and watch history sync with a free account.');
+    const st = pstate();
+    const nm = t.name || '';
+    const { inList, isDone } = markState(t);
+    const inCont = !!(t.id && (st.continue || []).some(x => x.id === t.id));
+    const items = [
+        { icon: 'ℹ️', label: 'Details', onClick: () => detail(t) },
+        { icon: inList ? '✓' : '＋', label: inList ? 'Remove from Library' : 'Add to Library',
+          onClick: async () => { const id = await resolveImdb(t); if (id) { toggleList({ id, type: t.type, name: nm, poster: t.poster }); repaintBadges(); } } },
+        { icon: '👁', label: isDone ? 'Mark as Unwatched' : 'Mark as Watched',
+          onClick: async () => { const id = await resolveImdb(t); if (id) { toggleWatchedTitle({ id, type: t.type, name: nm, poster: t.poster }); repaintBadges(); } } },
+        { icon: '👍', label: 'Thumbs up — more like this',
+          onClick: async () => { const id = await resolveImdb(t); if (id) setRating(id, 1); } },
+        { icon: '👎', label: 'Thumbs down — not for me',
+          onClick: async () => { const id = await resolveImdb(t); if (id) setRating(id, -1); } },
+    ];
+    if (inCont) items.push({ icon: '↺', label: 'Clear Progress',
+        onClick: () => { clearProgress(t); if (page === 'home') paintContinueRow(); else if (page === 'library') library(); } });
+    openSheet(nm, items);
+}
+function openSheet(title, items) {
+    document.getElementById('ck-sheet')?.remove();
+    const ov = document.createElement('div'); ov.id = 'ck-sheet'; ov.className = 'ck-sheet-ov';
+    const card = document.createElement('div'); card.className = 'ck-sheet';
+    card.innerHTML = title ? `<div class="ck-sheet-h">${title.replace(/</g, '&lt;')}</div>` : '';
+    for (const it of items) {
+        const r = document.createElement('button'); r.className = 'ck-sheet-row' + (it.danger ? ' danger' : '');
+        r.innerHTML = `<span class="ck-sheet-ic">${it.icon || ''}</span><span>${it.label}</span>`;
+        r.onclick = () => { ov.remove(); it.onClick && it.onClick(); };
+        card.appendChild(r);
+    }
+    ov.appendChild(card);
+    ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    document.body.appendChild(ov);
 }
 function addRow(label, items, opts, holder) {
     if (!items?.length) return;
@@ -821,13 +1101,14 @@ async function rowItems(r) {
     if (r.ids) return idsRow(r.type, r.ids);   // curated watch orders: EXACT order, never shuffled
     // theme category spanning both types (Superheroes/Zombies/…): movies + shows interleaved
     if (r.tvTmdb && r.tmdb) {
-        // pages=2 mirrors the web build + the TV app's tmdbBoth() (same input → same profileMix order)
+        // pages=3 mirrors the TV app's tmdbBoth() exactly — same input list + same
+        // profileMix seed = the SAME row order on every device for this profile
         const [mv, tv] = await Promise.all([tmdbRow('movie', r.tmdb, 4), tmdbRow('tv', r.tvTmdb, 4)]);
         const out = []; const n = Math.max(mv.length, tv.length);
         for (let i = 0; i < n; i++) { if (mv[i]) out.push(mv[i]); if (tv[i]) out.push(tv[i]); }
         // dedupe by type+TMDB id — these items carry .tmdb, NOT .id, so keying on x.id
         // (undefined for all of them) collapsed every themed row to a single tile
-        // (AJ Sep 27 "zombies / time travel / superhero rows only have one item")
+        // (AJ Sep 26 "Time Travel or Superheroes theres only like 1 item")
         const seen = new Set();
         return profileMix(out.filter(x => { const k = x.id || x.type + ':' + x.tmdb; return x && !seen.has(k) && seen.add(k); }));
     }
@@ -859,9 +1140,9 @@ function profileMix(items) {
 }
 // For You — prefer the addon server's PERSONALIZED catalog: the SAME source the TV/mobile
 // app uses (real per-profile watch-history weighting + daily respin), so a signed-in user
-// gets an identical, truly-personal For You on desktop. Guests — or a service that returns
-// nothing — fall through to the client-side TMDB consensus below. (AJ Sep 19: the desktop/web
-// For You was a generic consensus while the apps had the personalized server one.)
+// gets an identical, truly-personal For You on the web. Guests — or a service that returns
+// nothing — fall through to the client-side TMDB consensus below. (AJ Sep 19: the web For
+// You was a generic consensus while the apps had the personalized server one.)
 // Swap the active profile ("Name #ab12" = S.useg) into the addon URL's config segment —
 // same as the TV app's Addons.withUser — so the service logs clicks and personalizes
 // For You per PROFILE, not per account (AJ Sep 24). Guest / non-config URL → unchanged.
@@ -918,7 +1199,7 @@ async function forYouRow(kind) {
 const newEpCache = {};
 const newEpAirCache = {};   // titleId -> newest unwatched ep's air timestamp (drives CW order)
 // FIRST-PAINT ORDER (TV 2.0.258 parity): the air-time boosts persist per profile, so a
-// fresh app launch sorts Continue Watching into its FINAL order on the very first paint —
+// fresh page load sorts Continue Watching into its FINAL order on the very first paint —
 // before the async newEpisodeCount pass lands — instead of painting watch-stamp order
 // and reshuffling a second later.
 const _cwBoostKey = () => 'ckCwBoost:' + (S.pid || '');
@@ -1146,8 +1427,8 @@ async function top10Row(holder) {
     });
     holder.appendChild(strip);
 }
-// 🔴 CREATOR LIVE (AJ's Twitch) — banner on Home + a fullscreen in-app player. Shows only
-// while live; frame/title/viewers refresh each Home load (server caches 60s).
+// 🔴 CREATOR LIVE (AJ's Twitch) — banner on web Home + a fullscreen in-app player. Shows
+// only while live; the frame/title/viewers refresh each Home load (server caches 60s).
 async function creatorBanner(holder) {
     try {
         const info = await j(`${SERVICE}/live/${S.subKey || 'x'}/creator.json`);
@@ -1169,14 +1450,14 @@ async function creatorBanner(holder) {
         holder.querySelector('.cl-frame').onclick = open;
     } catch { holder.remove(); }
 }
-function openCreatorPlayer(info) {
-    const path = info.embedPath || `/live/twitchembed?c=${info.channel || ''}`;
+function openCreatorPlayer(j) {
+    const path = j.embedPath || `/live/twitchembed?c=${j.channel || ''}`;
     let chat = false;
     const ov = document.createElement('div');
     ov.className = 'creator-player';
     const src = () => `${SERVICE}${path}${chat ? (path.includes('?') ? '&' : '?') + 'chat=1' : ''}`;
     ov.innerHTML = `<div class="cp-bar">
-        <span>🔴 ${(info.name || 'KruzAurora')} — ${(info.title || '').replace(/</g, '&lt;').slice(0, 60)}</span>
+        <span>🔴 ${(j.name || 'KruzAurora')} — ${(j.title || '').replace(/</g, '&lt;').slice(0, 60)}</span>
         <span><button class="cp-chat">💬 Chat</button><button class="cp-close">✕</button></span></div>
         <iframe allow="autoplay; fullscreen; encrypted-media" allowfullscreen src="${src()}"></iframe>`;
     document.body.appendChild(ov);
@@ -1201,14 +1482,23 @@ async function home() {
     const top10Holder = document.createElement('div'); rows.appendChild(top10Holder);
     top10Row(top10Holder);
     // rows land IN CATALOG ORDER via pre-placed slots (async fills used to append in
-    // completion order — the board shuffled on every load and looked nothing like the TV)
-    const slot = () => { const s = document.createElement('div'); rows.appendChild(s); return s; };
+    // completion order — the board shuffled on every load and looked nothing like the TV).
+    // Each slot opens as a SKELETON (label + gray tiles) so the whole page exists and
+    // scrolls instantly (AJ Sep 24: "my rows in my order, scroll down instantly") —
+    // posters swap in as each row's fetch lands.
+    const slot = (label) => {
+        const s = document.createElement('div');
+        s.innerHTML = `<div class="row-label">${(label || '').replace(/</g, '&lt;')}</div>
+            <div class="strip">${'<div class="skel-tile"></div>'.repeat(8)}</div>`;
+        rows.appendChild(s); return s;
+    };
     const fill = (holder, label, items) => {
         if (!items?.length) { holder.remove(); return; }
+        holder.innerHTML = '';
         addRow(label, items, null, holder);
     };
     if (!S.guest) {
-        const fm = slot(), fs = slot();
+        const fm = slot('For You — Movies'), fs = slot('For You — Series');
         forYouRow('movie').then(x => fill(fm, 'For You — Movies', x));
         forYouRow('tv').then(x => fill(fs, 'For You — Series', x));
     }
@@ -1218,7 +1508,7 @@ async function home() {
     for (const label of enabled) {
         const r = CK_CAT.SHELF_CATALOG.find(x => x.label === label);
         if (!r) continue;
-        const s = slot();
+        const s = slot(r.label);
         rowItems(r).then(items => fill(s, r.label, items));
     }
 }
@@ -1250,37 +1540,88 @@ async function loadSearchBrowse() {
     h.innerHTML = '';
     if (!searchScope) return;
     const JP = 'with_genres=16&with_origin_country=JP';
+    // MANY more Discover rows (AJ Oct 27 "not enough options … a lot more"): full TMDB genre
+    // sweep + decades + collections per scope. Fetched in BATCHES (not all at once) so 25-30
+    // rows don't fire ~90 parallel TMDB calls and trip rate limits / blank rows.
     const defs = searchScope === 'movie' ? [
         ['Trending Movies', 'movie', 'trending/movie/week'],
         ['Popular Movies', 'movie', 'movie/popular'],
         ['Top Rated Movies', 'movie', 'movie/top_rated'],
         ['New in Theaters', 'movie', 'movie/now_playing'],
+        ['Coming Soon', 'movie', 'movie/upcoming'],
+        ['Biggest Blockbusters', 'movie', 'discover/movie?sort_by=revenue.desc&vote_count.gte=500'],
         ['Action', 'movie', 'discover/movie?with_genres=28&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Adventure', 'movie', 'discover/movie?with_genres=12&sort_by=popularity.desc&vote_count.gte=100'],
         ['Comedy', 'movie', 'discover/movie?with_genres=35&sort_by=popularity.desc&vote_count.gte=100'],
         ['Horror', 'movie', 'discover/movie?with_genres=27&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Thriller', 'movie', 'discover/movie?with_genres=53&sort_by=popularity.desc&vote_count.gte=100'],
         ['Sci-Fi', 'movie', 'discover/movie?with_genres=878&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Fantasy', 'movie', 'discover/movie?with_genres=14&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Drama', 'movie', 'discover/movie?with_genres=18&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Romance', 'movie', 'discover/movie?with_genres=10749&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Mystery', 'movie', 'discover/movie?with_genres=9648&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Crime', 'movie', 'discover/movie?with_genres=80&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Family', 'movie', 'discover/movie?with_genres=10751&sort_by=popularity.desc&vote_count.gte=80'],
+        ['Animation', 'movie', 'discover/movie?with_genres=16&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Documentaries', 'movie', 'discover/movie?with_genres=99&sort_by=popularity.desc&vote_count.gte=50'],
+        ['War', 'movie', 'discover/movie?with_genres=10752&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Western', 'movie', 'discover/movie?with_genres=37&sort_by=popularity.desc&vote_count.gte=50'],
+        ['Music & Musicals', 'movie', 'discover/movie?with_genres=10402&sort_by=popularity.desc&vote_count.gte=50'],
+        ['History', 'movie', 'discover/movie?with_genres=36&sort_by=popularity.desc&vote_count.gte=80'],
+        ['2010s Hits', 'movie', 'discover/movie?primary_release_date.gte=2010-01-01&primary_release_date.lte=2019-12-31&sort_by=popularity.desc&vote_count.gte=300'],
+        ['2000s Throwbacks', 'movie', 'discover/movie?primary_release_date.gte=2000-01-01&primary_release_date.lte=2009-12-31&sort_by=popularity.desc&vote_count.gte=300'],
+        ['90s Classics', 'movie', 'discover/movie?primary_release_date.gte=1990-01-01&primary_release_date.lte=1999-12-31&sort_by=popularity.desc&vote_count.gte=200'],
+        ['80s Classics', 'movie', 'discover/movie?primary_release_date.gte=1980-01-01&primary_release_date.lte=1989-12-31&sort_by=popularity.desc&vote_count.gte=150'],
     ] : searchScope === 'series' ? [
         ['Trending Shows', 'tv', 'trending/tv/week'],
         ['Popular Shows', 'tv', 'tv/popular'],
         ['Top Rated Shows', 'tv', 'tv/top_rated'],
+        ['On The Air', 'tv', 'tv/on_the_air'],
         ['New Shows', 'tv', 'discover/tv?sort_by=first_air_date.desc&vote_count.gte=25'],
         ['Drama', 'tv', 'discover/tv?with_genres=18&sort_by=popularity.desc&vote_count.gte=100'],
         ['Crime', 'tv', 'discover/tv?with_genres=80&sort_by=popularity.desc&vote_count.gte=100'],
         ['Comedy Shows', 'tv', 'discover/tv?with_genres=35&sort_by=popularity.desc&vote_count.gte=100'],
+        ['Sitcoms', 'tv', 'discover/tv?with_genres=35&sort_by=vote_count.desc&vote_count.gte=500'],
+        ['Action & Adventure', 'tv', 'discover/tv?with_genres=10759&sort_by=popularity.desc&vote_count.gte=80'],
+        ['Sci-Fi & Fantasy', 'tv', 'discover/tv?with_genres=10765&sort_by=popularity.desc&vote_count.gte=80'],
+        ['Mystery', 'tv', 'discover/tv?with_genres=9648&sort_by=popularity.desc&vote_count.gte=50'],
         ['Reality', 'tv', 'discover/tv?with_genres=10764&sort_by=popularity.desc&vote_count.gte=50'],
+        ['Documentary', 'tv', 'discover/tv?with_genres=99&sort_by=popularity.desc&vote_count.gte=30'],
+        ['Animation', 'tv', 'discover/tv?with_genres=16&sort_by=popularity.desc&vote_count.gte=50'],
+        ['Kids', 'tv', 'discover/tv?with_genres=10762&sort_by=popularity.desc&vote_count.gte=20'],
+        ['Family', 'tv', 'discover/tv?with_genres=10751&sort_by=popularity.desc&vote_count.gte=30'],
+        ['War & Politics', 'tv', 'discover/tv?with_genres=10768&sort_by=popularity.desc&vote_count.gte=30'],
+        ['Western', 'tv', 'discover/tv?with_genres=37&sort_by=popularity.desc&vote_count.gte=20'],
+        ['Korean Dramas', 'tv', 'discover/tv?with_origin_country=KR&sort_by=popularity.desc&vote_count.gte=30'],
+        ['British TV', 'tv', 'discover/tv?with_origin_country=GB&sort_by=popularity.desc&vote_count.gte=50'],
+        ['2010s Shows', 'tv', 'discover/tv?first_air_date.gte=2010-01-01&first_air_date.lte=2019-12-31&sort_by=popularity.desc&vote_count.gte=200'],
+        ['2000s Shows', 'tv', 'discover/tv?first_air_date.gte=2000-01-01&first_air_date.lte=2009-12-31&sort_by=popularity.desc&vote_count.gte=150'],
+        ['90s Shows', 'tv', 'discover/tv?first_air_date.gte=1990-01-01&first_air_date.lte=1999-12-31&sort_by=popularity.desc&vote_count.gte=80'],
     ] : [
         ['Trending Anime', 'tv', `discover/tv?${JP}&sort_by=popularity.desc`],
         ['Top Rated Anime', 'tv', `discover/tv?${JP}&sort_by=vote_average.desc&vote_count.gte=500`],
-        ['Anime Movies', 'movie', `discover/movie?${JP}&sort_by=popularity.desc`],
         ['New Anime', 'tv', `discover/tv?${JP}&sort_by=first_air_date.desc&vote_count.gte=25`],
+        ['Anime Movies', 'movie', `discover/movie?${JP}&sort_by=popularity.desc`],
+        ['Top Anime Movies', 'movie', `discover/movie?${JP}&sort_by=vote_average.desc&vote_count.gte=300`],
         ['Classic Anime', 'tv', `discover/tv?${JP}&first_air_date.lte=2009-12-31&sort_by=vote_count.desc`],
         ['Action Anime', 'tv', 'discover/tv?with_genres=16,10759&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=50'],
         ['Romance Anime', 'tv', 'discover/tv?with_genres=16,10749&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=25'],
+        ['Comedy Anime', 'tv', 'discover/tv?with_genres=16,35&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=25'],
+        ['Fantasy Anime', 'tv', 'discover/tv?with_genres=16,10765&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=25'],
+        ['Drama Anime', 'tv', 'discover/tv?with_genres=16,18&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=25'],
+        ['Mystery Anime', 'tv', 'discover/tv?with_genres=16,9648&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=20'],
+        ['Kids Anime', 'tv', 'discover/tv?with_genres=16,10762&with_origin_country=JP&sort_by=popularity.desc&vote_count.gte=15'],
     ];
-    // all shelves fetch AT ONCE, render in order (AJ Oct 11 "takes too long")
-    const fetched = await Promise.all(defs.map(([label, kind, path]) => tmdbRow(kind, path, 3).then(items => [label, items])));
-    if (token !== sBrowseToken) return;
-    for (const [label, items] of fetched) if (items.length) addRow(label, items, null, h);
+    // batched fetch (AJ Oct 27): render rows in waves of 6 so a 25-30 row page paints fast and
+    // never fires ~90 parallel TMDB calls at once (1 page/row = ~20 titles, plenty for a shelf)
+    for (let i = 0; i < defs.length; i += 6) {
+        if (token !== sBrowseToken) return;
+        const batch = defs.slice(i, i + 6);
+        const fetched = await Promise.all(batch.map(([label, kind, path]) =>
+            tmdbRow(kind, path, 1).then(items => [label, items]).catch(() => [label, []])));
+        if (token !== sBrowseToken) return;
+        for (const [label, items] of fetched) if (items.length) addRow(label, items, null, h);
+    }
 }
 paintSearchPanels();
 // anime-scoped search: TMDB search results carry genre_ids + original_language in the hit
@@ -1391,11 +1732,16 @@ async function resolveImdb(t) {
     return d?.imdb_id || null;
 }
 let cur = null;
+let detailBackTo = 'home';   // where ‹ Back on a detail page returns to (AJ Sep 26: from
+                             // search it went Home instead of back to the results)
 async function detail(t) {
     const imdb = await resolveImdb(t);
     if (!imdb) return;
     const meta = (await j(`${CINE}/meta/${t.type}/${imdb}.json`))?.meta;
     if (!meta) return;
+    // remember the list we came FROM (home/search/discover/library) so Back returns there
+    // with its results intact — but not detail/episode/person, which aren't return targets
+    if (['home', 'search', 'discover', 'library', 'livetv'].includes(page)) detailBackTo = page;
     cur = { imdb, type: t.type, meta, t: { ...t, id: imdb } };
     dismissNewEpsBadge(imdb, meta);   // opening the show clears its "+N" badge everywhere
     nav('detail');
@@ -1678,7 +2024,10 @@ function playEpisodeStream(s, meta, ep, sid, label) {
         pushContinueLocal({ id: meta.id, type: 'series', name: meta.name, poster: meta.poster || '' });
         const st = pstate();
         st.cwlast = { ...(st.cwlast || {}), [meta.id]: sid };
-        st.cwlastts = { ...(st.cwlastts || {}), [meta.id]: Date.now() };   // pointer recency (Nov 3, parity w/ TV 2.0.245)
+        // stamp WHEN the pointer was chosen (Nov 3, cross-device parity with TV 2.0.245):
+        // the merge favors the most recently CHOSEN pointer, so deliberately going back to
+        // an earlier episode isn't reverted by an older finished one on another device
+        st.cwlastts = { ...(st.cwlastts || {}), [meta.id]: Date.now() };
         pushAccount();
     }
     play(s.url, label, sid, s.subtitles || null, { ph: /^⏳/.test(s.name || '') });
@@ -1714,8 +2063,9 @@ function streamEl(st) {
             `<span class="chip chip-${c.toLowerCase().replace(/[^a-z0-9]/g, '')}">${c}</span>`).join('')}</div>
         <div class="stream-title">${lines[0] || ''}</div>
         ${lines[1] ? `<div class="stream-note">${lines[1]}</div>` : ''}`;
-    // CLICK-AND-HOLD / right-click → Report Stream Bad (Nov 3, parity with web/TV/iOS):
-    // flag a specific copy; AJ gets a one-tap ☠️ ban button for THAT exact copy.
+    // CLICK-AND-HOLD → Report Stream Bad (AJ Oct 27): long-press (or right-click) a specific
+    // copy to flag it; AJ gets a one-tap ☠️ ban button for THAT exact copy. Only for resolved
+    // copies that carry an infoHash in their /tbplay/<key>/<hash> url (our local cache has none).
     if (!st.ckNotice) {
         const hash = (String(st.url || '').match(/\/tbplay\/[^/]+\/([0-9a-fA-F]{32,40})/) || [])[1] || '';
         if (hash) {
@@ -1725,13 +2075,14 @@ function streamEl(st) {
             el.addEventListener('pointerup', cancel);
             el.addEventListener('pointerleave', cancel);
             el.addEventListener('pointercancel', cancel);
+            // swallow the click the long-press would otherwise also fire (which would start playback)
             el.addEventListener('click', (e) => { if (el._lpFired) { e.stopImmediatePropagation(); e.preventDefault(); el._lpFired = false; } }, true);
             el.addEventListener('contextmenu', (e) => { e.preventDefault(); reportStreamBad(hash, st); });
         }
     }
     return el;
 }
-// Report a specific copy as bad → server attaches a one-tap ban button to AJ's report feed.
+// Report a specific copy as bad → server attaches a one-tap ban button to AJ's problem-report feed.
 async function reportStreamBad(hash, st) {
     const nm = String(st?.title || st?.name || 'this stream').split('\n')[0].slice(0, 80);
     if (!(await ckAsk('Report this stream?', `Tell AJ this copy is bad so it can be blocked:\n\n${nm}`, 'Report bad', false))) return;
@@ -1740,7 +2091,7 @@ async function reportStreamBad(hash, st) {
             text: 'Bad stream reported by long-press in the stream list.',
             hash, stitle: nm,
             key: S.subKey || '', u: S.useg || S.user || '',
-            v: 'desktop', model: (navigator.userAgent || '').slice(0, 60),
+            v: 'web', model: (navigator.userAgent || '').slice(0, 60),
             ctx: ((cur?.meta?.name) || '') + ' — stream list',
         } });
         toast('Reported — thanks. AJ can block this copy now.');
@@ -2283,7 +2634,7 @@ $('auth-signin').onclick = () => auth('signin');
 $('auth-signup').onclick = () => auth('signup');
 $('auth-forgot').onclick = () => forgotPassword();
 $('auth-guest').onclick = () => guest();
-$('back').onclick = () => { nav('home'); };
+$('back').onclick = () => { nav(detailBackTo); };   // back to where you opened it from (AJ Sep 26)
 
 (async () => {
     SERVICE = await ck.service();
@@ -2333,12 +2684,8 @@ async function checkUpdate() {
             cover.id = 'update-block';
             cover.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(10,8,20,.97);' +
                 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;text-align:center';
-            // plain-terms "what's new" from version.json notes (AJ Oct 11)
-            const notes = Array.isArray(r.notes) ? r.notes.map(n => `•  ${n}`).join('<br>') : (r.notes || '');
             cover.innerHTML = `<div style="font-size:1.6rem;font-weight:800">Update required</div>
-                <div style="color:#9aa">This version is out of date and can't sync correctly.<br>Update to v${r.version} to keep watching.</div>` +
-                (notes ? `<div style="font-weight:800;margin-top:6px">What's new</div>
-                 <div style="color:#9aa;text-align:left;max-width:460px">${notes}</div>` : '');
+                <div style="color:#9aa">This version is out of date and can't sync correctly.<br>Update to v${r.version} to keep watching.</div>`;
             const ub = document.createElement('button');
             ub.textContent = `⬇ Update to v${r.version}`;
             ub.style.cssText = 'background:#f5c518;color:#1a1400;border:none;border-radius:999px;' +
@@ -2725,6 +3072,7 @@ const ACCENTS = [['Royal (default)', '#7B5BF5'], ['Gold', '#E0A400'], ['Ocean', 
                  ['Crimson', '#E23B4E'], ['Emerald', '#1DB954'], ['Pink', '#E754A6'],
                  ['Sunset', '#F0702A'], ['Teal', '#18B8A8']];
 function applyAccent() {
+    // the whole stylesheet themes off var(--accent); just point it at the profile's pick
     document.documentElement.style.setProperty('--accent', PREF('accent', '') || '#7B5BF5');
 }
 const PREF = (k, d) => JSON.parse(localStorage.getItem('ckp-' + k) ?? JSON.stringify(d));
@@ -2776,6 +3124,16 @@ function sectionText(t) {
     const s = document.createElement('div'); s.className = 'ssection'; s.textContent = t;
     return s;
 }
+// In-place toggle (AJ Oct 27 "when i click something in settings the entire page blinks"): the
+// toggles used to call renderSettings() which wipes + rebuilds the whole body = a visible flash
+// on every tap. This flips the pref and updates ONLY this row's value text — no re-render, no blink.
+function toggleRow(label, getOn, flip) {
+    const r = settingRow(label, getOn() ? 'On' : 'Off', () => {
+        flip();
+        const v = r.querySelector('.srow-value'); if (v) v.textContent = getOn() ? 'On' : 'Off';
+    });
+    return r;
+}
 function renderSettings() {
     const body = $('settings-body');
     body.innerHTML = '';
@@ -2791,6 +3149,8 @@ function renderSettings() {
     if (S.guest || !S.email) card.onclick = () => { localStorage.removeItem('ck'); location.reload(); };
     body.appendChild(card);
     if (!S.guest && S.email) {
+        // profile lives in Settings on phone (no profile tab in the bottom bar), like the native app
+        body.appendChild(settingRow('Switch profile', S.user || '', () => profileManager()));
         body.appendChild(settingRow('Sync library now', '', async () => {
             toast('Syncing…');
             const st = await j(`${SERVICE}/tvapp/state?e=${encodeURIComponent(S.email)}&t=${encodeURIComponent(S.token)}`);
@@ -2810,28 +3170,31 @@ function renderSettings() {
     // grouped like the Android app's settings screen, not one flat list
     body.appendChild(sectionText('APPEARANCE'));
     body.appendChild(settingRow('Accent color', PREF('accentname', '') || 'Royal (default)', () => accentPicker()));
-    body.appendChild(settingRow('Show titles under posters', PREF('titles', true) ? 'On' : 'Off',
-        () => { SETPREF('titles', !PREF('titles', true)); renderSettings(); }));
-    body.appendChild(settingRow('Blur unwatched episode images', PREF('blur', false) ? 'On' : 'Off',
-        () => { SETPREF('blur', !PREF('blur', false)); renderSettings(); }));
+    body.appendChild(toggleRow('Show titles under posters', () => PREF('titles', true),
+        () => SETPREF('titles', !PREF('titles', true))));
+    body.appendChild(toggleRow('Blur unwatched episode images', () => PREF('blur', false),
+        () => SETPREF('blur', !PREF('blur', false))));
 
     body.appendChild(sectionText('HOME & LIBRARY'));
     const shelves = (st.shelves && st.shelves.length) ? st.shelves : CK_CAT.DEFAULT_SHELVES;
     body.appendChild(settingRow('Shelves', `${shelves.length} shelves`, () => shelfPicker()));
     body.appendChild(settingRow('Reorder shelves', 'Set the order they show on Home', () => shelfReorder()));
-    body.appendChild(settingRow('Hide watched titles', PREF('hidewatched', false) ? 'On' : 'Off',
-        () => { SETPREF('hidewatched', !PREF('hidewatched', false)); renderSettings(); }));
-    // cycles Home → Live TV → Library; stored as the nav key
+    body.appendChild(toggleRow('Hide watched titles', () => PREF('hidewatched', false),
+        () => SETPREF('hidewatched', !PREF('hidewatched', false))));
+    // cycles Home → Live TV → Library; stored as the nav key — updates in place, no re-render
     const LANDING = [['home', 'Home'], ['livetv', 'Live TV'], ['library', 'Library']];
-    const curLand = LANDING.find(x => x[0] === PREF('landingtab', 'home')) || LANDING[0];
-    body.appendChild(settingRow('Open app on', curLand[1], () => {
-        const next = LANDING[(LANDING.indexOf(curLand) + 1) % LANDING.length];
-        SETPREF('landingtab', next[0]); renderSettings();
-    }));
+    const landRow = settingRow('Open app on',
+        (LANDING.find(x => x[0] === PREF('landingtab', 'home')) || LANDING[0])[1], () => {
+            const cur = LANDING.find(x => x[0] === PREF('landingtab', 'home')) || LANDING[0];
+            const next = LANDING[(LANDING.indexOf(cur) + 1) % LANDING.length];
+            SETPREF('landingtab', next[0]);
+            const v = landRow.querySelector('.srow-value'); if (v) v.textContent = next[1];
+        });
+    body.appendChild(landRow);
 
     body.appendChild(sectionText('NOTIFICATIONS'));
-    body.appendChild(settingRow('New episode notifications', PREF('notifnew', true) ? 'On' : 'Off',
-        () => { SETPREF('notifnew', !PREF('notifnew', true)); renderSettings(); }));
+    body.appendChild(toggleRow('New episode notifications', () => PREF('notifnew', true),
+        () => SETPREF('notifnew', !PREF('notifnew', true))));
 
     // Player settings only exist when there's something to PLAY
     if (hasService()) {
