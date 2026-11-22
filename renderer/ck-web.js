@@ -1158,12 +1158,43 @@
         const gp = player.querySelector('.lv-guidepanel');   // legacy panel (kept hidden; CSS reused)
         const gbtn = player.querySelector('.wp-guide');
         let fgEl = null;
-        const hideFullGuide = () => { if (!fgEl) return; fgEl.remove(); fgEl = null; v.classList.remove('wp-corner'); };
+        const hideFullGuide = () => { if (!fgEl) return;
+            try { window.CKGuide2 && CKGuide2.unmount(fgEl); } catch {}
+            fgEl.remove(); fgEl = null; v.classList.remove('wp-corner'); };
+        let _g2MiniFailed = false;   // canvas mini guide blew up once → DOM rows for the session
         const showFullGuide = () => {
             if (fgEl || !guide.length || !onTune) return;
             v.classList.add('wp-corner');
             fgEl = document.createElement('div');
             fgEl.className = 'wp-fullguide';
+            // CANVAS mini guide (Nov 14 "mini guide is still old"): the same guidev2 engine the
+            // Live TV page uses, over the corner video. Any failure → classic DOM rows below.
+            if (!_g2MiniFailed && window.CKGuide2 && localStorage.getItem('ckguidev2') !== '0'
+                && typeof lvGuideData === 'function') {
+                const mounted = fgEl;
+                player.appendChild(fgEl);
+                (async () => {
+                    try {
+                        const d = await lvGuideData();
+                        if (!d?.channels?.length) throw new Error('no guide data');
+                        if (mounted !== fgEl) return;   // closed while loading
+                        CKGuide2.mount(mounted, {
+                            data: d,
+                            accent: (typeof PREF === 'function' && (PREF('accent', '') || '')) || '#7B5BF5',
+                            onTune: async (cid, nm, lg, nwTxt) => {
+                                if (cid === curCh) { hideFullGuide(); return; }   // what's playing = fullscreen
+                                try { await hopTo(cid, nm, lg, nwTxt, () => {}); } catch {}
+                            },
+                            onFavorite: (cid, on) => { try { _lvFavSet(String(cid).replace(/^cklive:/, ''), on); } catch {} },
+                        });
+                    } catch (e) {
+                        console.warn('[guide2 mini] fell back to rows:', e);
+                        _g2MiniFailed = true;
+                        if (mounted === fgEl) { hideFullGuide(); showFullGuide(); }
+                    }
+                })();
+                return;
+            }
             const head = document.createElement('div'); head.className = 'wpg-head';
             const body = document.createElement('div'); body.className = 'wpg-body';
             fgEl.append(head, body);

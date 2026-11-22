@@ -19,6 +19,25 @@ const j = async (url, opts = {}) => {
     const r = await ck.http({ url, ...opts });
     try { return JSON.parse(r.text); } catch { return null; }
 };
+// Streaming-vs-linear air offset (Nov 21, Yellowjackets): Cinemeta/TMDB carry the LINEAR
+// slot (Showtime Sunday) for shows that really drop on streaming days earlier. The server
+// knows the offset (/airoffset/<tt>, auto-detected for Showtime/P+ shows); shift every
+// episode's released stamp ONCE at meta load so the picker dates, aired checks, "not aired"
+// tags and new-episode badges all read the real drop. No-op (h=0) for everything else.
+const _airOff = {};
+const airShift = async (meta) => {
+    try {
+        const id = String(meta?.id || '').split(':')[0];
+        if (!meta || meta._airShifted || !id.startsWith('tt') || !(meta.videos || []).length) return meta;
+        meta._airShifted = true;
+        if (!(id in _airOff)) _airOff[id] = (await j(`${SERVICE}/airoffset/${id}`))?.h || 0;
+        const h = _airOff[id];
+        if (h) meta.videos.forEach(v => {
+            if (v.released) try { v.released = new Date(+new Date(v.released) + h * 3600e3).toISOString(); } catch {}
+        });
+    } catch {}
+    return meta;
+};
 // account-endpoint fetch: a 401/403 on a stored token means the server revoked it
 // (/logout, password change) — wipe the session and land on sign-in instead of living
 // on local state forever (AJ Oct 16: /logout "kept him signed into everything")
@@ -376,6 +395,38 @@ async function lvGuideData() {   // one fetch per region per minute, shared by g
     return _lvGuideCache.r === lvRegion ? _lvGuideCache.d : null;
 }
 let _lvRenderGen = 0;   // bumped on every page/guide re-render — orphans stale chunk pumps
+// NEW canvas guide (guidev2 — TV-app parity, Nov 14): same painted-grid engine as the TV's
+// GuideCanvas, mouse/touch/keyboard. Falls back to the classic DOM guide on ANY failure so
+// the page can never go blank; localStorage ckguidev2='0' opts a browser out entirely.
+async function lvRenderGuide2(grid) {
+    const gen = ++_lvRenderGen;
+    try {
+        const d = await lvGuideData();
+        if (gen !== _lvRenderGen) return;
+        if (!d?.channels?.length) {
+            grid.innerHTML = '<div class="lv-loading">Loading the guide…</div>';
+            setTimeout(() => { if (gen === _lvRenderGen && page === 'livetv' && lvGenre === 'Guide') lvRenderGuide2(grid); }, 3000);
+            return;
+        }
+        grid.style.height = '78vh';
+        CKGuide2.mount(grid, {
+            data: d,
+            // 🔴 sports sections are a per-profile opt-out (TV guideSports parity, AJ Nov 15);
+            // honored at mount — the guide remounts on every Guide open, the TV's next-open rule.
+            // Sections ONLY: the Live Now strips on other chips + the creator row are untouched.
+            gamesUrl: PREF('guidesports', true) ? `${SERVICE}/live/${S.subKey}/games.json` : '',
+            epgDescUrl: id => `${SERVICE}/live/${S.subKey}/epgdesc.json?ch=${encodeURIComponent(id)}`,
+            accent: PREF('accent', '') || '#7B5BF5',
+            onTune: (cid, name) => _lvPlayCh(cid, name, [], null),
+            onFavorite: (cid, on) => _lvFavSet(cid, on),
+        });
+    } catch (e) {
+        console.warn('[guide2] fell back to classic guide:', e);
+        try { CKGuide2.unmount(grid); } catch {}
+        grid.style.height = '';
+        if (gen === _lvRenderGen) lvRenderGuide(grid);
+    }
+}
 async function lvRenderGuide(grid) {
     const gen = ++_lvRenderGen;
     const d = await lvGuideData();
@@ -616,7 +667,14 @@ async function lvRenderUpcoming(grid) {
 // because its hard to find") — server remembers per key, guide pins them
 // shared fav write: patch the cache IN PLACE so every view agrees instantly — waiting on
 // the next fetch made a fresh star look broken (AJ Sep 17 "doesn't add until i refresh")
+let _lvFavGateId = '', _lvFavGateAt = 0;
 async function _lvFavSet(id, on) {
+    // 1.2s per-channel double-fire guard (Android favToggle parity, Nov 14): fav POSTs
+    // could land in identical pairs — add-then-remove = a star that silently un-stars.
+    // Gated HERE at the single choke point, never also at callers (second gate eats the first).
+    const _fg = Date.now();
+    if (id === _lvFavGateId && _fg - _lvFavGateAt < 1200) return;
+    _lvFavGateId = id; _lvFavGateAt = _fg;
     const d0 = _lvGuideCache.d;
     if (d0) {
         d0.favs = (d0.favs || []).filter(x => x !== id);
@@ -708,6 +766,19 @@ function _lvRowMobile(grid, m, g, guideList, fmtT) {
     grid.appendChild(r);
 }
 let _lvLockChk = { at: 0, d: null };
+// live access for the Settings gate (TV "liveok" parity, AJ Nov 15): reuse livetvPage's
+// 5-min memoized lock probe. Unknown (probe failed) reads as locked — same as the TV's
+// default-false liveok pref; the row shows up once a probe lands.
+async function lvLiveOk() {
+    if (!S.liveCat) return false;
+    try {
+        if (!_lvLockChk.d || Date.now() - _lvLockChk.at > 300e3)
+            _lvLockChk = { at: Date.now(), d: await j(S.liveCat.base + `/catalog/tv/${S.liveCat.cat.id}.json`) };
+    } catch {}
+    const m = _lvLockChk.d?.metas;
+    if (!Array.isArray(m)) return false;
+    return !(m.length === 1 && m[0].id === 'cklive:upgrade');
+}
 async function livetvPage() {
     if (!S.liveCat) return;
     const chips = $('livetv-chips'), grid = $('livetv-grid');
@@ -746,7 +817,12 @@ async function livetvPage() {
         sel.innerHTML = regs.map(r => `<option value="${r.code || ''}"${(r.code || '') === lvRegion ? ' selected' : ''}>${r.flag || ''} ${r.label || r.code}</option>`).join('');
     }).catch(() => {});
     const banner = $('livetv-banner');
-    if (banner) lvRenderBanner(banner);   // async, fills in when ready
+    if (banner) {
+        // guidev2 carries the 🔴 live-game sections INSIDE the grid — the old Live Now strips
+        // on top doubled them (AJ Nov 14 "live now is still at the top"). Other chips keep them.
+        if (lvGenre === 'Guide' && localStorage.getItem('ckguidev2') !== '0' && window.CKGuide2) banner.innerHTML = '';
+        else lvRenderBanner(banner);   // async, fills in when ready
+    }
     grid.innerHTML = '<div class="lv-loading">Loading…</div>';
     // chips = THIS region's real sections (AJ: "where is the separate sport or news") +
     // catalog extras. USA: Sports/News/Kids/Movies/Entertainment · UK: Sky Sports/EFL/News…
@@ -796,7 +872,11 @@ async function livetvPage() {
         sin.style.cssText += ';display:block;width:100%;max-width:none;min-width:0;margin:.15rem 0 .5rem';
         banner ? banner.after(sin) : chips.before(sin);
     } else chips.appendChild(sin);
-    if (lvGenre === 'Guide') return lvRenderGuide(grid);
+    if (lvGenre === 'Guide') {
+        // guidev2 default (TV parity); '0' opts out, and lvRenderGuide2 self-falls-back on error
+        if (localStorage.getItem('ckguidev2') !== '0' && window.CKGuide2) return lvRenderGuide2(grid);
+        return lvRenderGuide(grid);
+    }
     if (lvGenre === '📅 Upcoming') return lvRenderUpcoming(grid);
     const now = Date.now();
     if (lvGenre === '★ Favorites') {
@@ -1084,7 +1164,7 @@ async function cineRow(type, id, genre, pages = 1) {
 async function idsRow(type, ids) {
     const metas = await Promise.all(ids.map(async id => {
         const m = (await j(`${CINE}/meta/movie/${id}.json`))?.meta
-            || (await j(`${CINE}/meta/series/${id}.json`))?.meta;
+            || await airShift((await j(`${CINE}/meta/series/${id}.json`))?.meta);
         if (m) return m;
         // Cinemeta doesn't know far-future titles yet (VisionQuest) — TMDB does; the tile
         // still shows in watch order, clicking gets the standard unaired treatment (Sep 17)
@@ -1222,7 +1302,7 @@ function saveCwBoosts() {
 async function newEpisodeCount(titleId) {
     if (titleId in newEpCache) return newEpCache[titleId];
     const st = pstate();
-    const meta = (await j(`${CINE}/meta/series/${titleId}.json`))?.meta;
+    const meta = await airShift((await j(`${CINE}/meta/series/${titleId}.json`))?.meta);
     const eps = (meta?.videos || []).filter(v => v.season > 0)
         .sort((a, b) => a.season - b.season || a.episode - b.episode);
     if (!eps.length) { newEpAirCache[titleId] = 0; return (newEpCache[titleId] = 0); }
@@ -1317,38 +1397,76 @@ function cwSorted(st) {
     const sortKey = (t) => Math.max(stampOf(t), newEpAirCache[t.id] || 0);
     return [...(st.continue || [])].sort((a, b) => sortKey(b) - sortKey(a));
 }
-let lastHeroKey = '';
+// HOME hero source (AJ Nov 15, TV buildHeroPager parity): the person's own Continue
+// Watching, newest first, as a rotating pager — "no top 10 [banner] if there is a continue
+// watching". Empty CW (new profile) falls back to the single trending hero exactly as
+// before. CW entries only carry posters, so meta.background first, poster as fallback art.
+let lastHeroKey = '', _heroItems = [], _heroIdx = 0, _heroT = 0, _heroGen = 0;
+const _heroBgCache = new Map();   // id → backdrop url, so flips don't re-fetch meta
 async function hero(st) {
     const h = $('hero');
-    let t = cwSorted(st)[0];   // SORTED first item, not raw st.continue[0] — matches the CW row
-    let sub = '', bg = '';
-    if (t) sub = t.type === 'series' && cwChip(st, t) ? `Continue watching · ${cwChip(st, t)}` : 'Continue watching';
-    const heroKey = t ? t.id + '|' + sub : 'trend';
+    const items = cwSorted(st).slice(0, 7);   // SORTED, same 7-slide cap as the TV pager
+    const heroKey = items.length ? items.map(x => x.id).join('|') + '|' + (cwChip(st, items[0]) || '') : 'trend';
     if (heroKey === lastHeroKey && h.childElementCount) return;   // quiet sync: no repaint when nothing changed
-    if (t) {
-        const meta = (await j(`${CINE}/meta/${t.type}/${t.id}.json`))?.meta;
-        bg = meta?.background || '';
-    } else {
+    clearInterval(_heroT); _heroT = 0; _heroItems = []; _heroIdx = 0;
+    if (!items.length) {
+        // trending fallback — the pre-pager single hero, unchanged
         const tr = await tmdbRow('tv', 'trending/tv/week', 1);
-        t = tr[0]; bg = t?.backdrop || ''; sub = 'Trending this week';
+        const t = tr[0], bg = t?.backdrop || '';
         if (t) { const f = await j(`https://api.themoviedb.org/3/tv/${t.tmdb}/external_ids?api_key=${TMDB}`); if (f?.imdb_id) t.id = f.imdb_id; }
+        if (!t || !bg) { h.classList.add('hidden'); return; }
+        lastHeroKey = heroKey;
+        _paintHeroSlide(h, st, t, bg, 'Trending this week', 1);
+        return;
     }
-    if (!t || !bg) { h.classList.add('hidden'); return; }
     lastHeroKey = heroKey;
+    _heroItems = items;
+    await _heroShow(st);
+    // ~9s auto-rotate like the TV; paused while Home is behind another page, the player,
+    // or a hidden tab — swapping pages never tears the timer down, it just idles
+    if (items.length > 1) _heroT = setInterval(() => {
+        if (page !== 'home' || playing || document.hidden || !_heroItems.length) return;
+        _heroIdx = (_heroIdx + 1) % _heroItems.length;
+        _heroShow(pstate());
+    }, 9000);
+}
+async function _heroShow(st) {
+    const gen = ++_heroGen;
+    const t = _heroItems[_heroIdx]; if (!t) return;
+    let bg = _heroBgCache.get(t.id);
+    if (bg === undefined) {
+        const meta = (await j(`${CINE}/meta/${t.type}/${t.id}.json`))?.meta;
+        bg = meta?.background || t.backdrop || t.poster || '';
+        _heroBgCache.set(t.id, bg);
+    }
+    if (gen !== _heroGen) return;   // flipped again / list changed while the meta loaded
+    const sub = t.type === 'series' && cwChip(st, t) ? `Continue watching · ${cwChip(st, t)}` : 'Continue watching';
+    _paintHeroSlide($('hero'), st, t, bg, sub, _heroItems.length);
+}
+function _paintHeroSlide(h, st, t, bg, sub, count) {
+    if (!t || !bg) { h.classList.add('hidden'); return; }
     // no service on the account → tracker shell: More info only, no play button
     h.innerHTML = `<div class="hero-bg" style="background-image:url('${bg}')"></div><div class="hero-fade"></div>
         <div class="hero-body"><h2>${t.name || ''}</h2><div class="hero-sub">${sub}</div>
         <div class="hero-btns">${hasService() ? `<button class="primary">▶ ${st.continue?.length ? 'Resume' : 'Watch'}</button>` : ''}
-        <button class="ghost">More info</button></div></div>`;
+        <button class="ghost">More info</button></div></div>`
+        // ‹ › manual flip over the art, like the TV pager's arrows (only when there IS a pager)
+        + (count > 1 ? `<button class="ghost hero-arr" data-d="-1" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);z-index:3">‹</button>
+        <button class="ghost hero-arr" data-d="1" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);z-index:3">›</button>` : '');
     h.classList.remove('hidden');
-    const btns = h.querySelectorAll('button');
+    const btns = h.querySelectorAll('.hero-btns button');
     const info = btns[btns.length - 1];
     info.onclick = (e) => { e.stopPropagation(); detail(t); };
     h.onclick = () => detail(t);
-    if (hasService()) btns[0].onclick = async (e) => {
+    if (hasService() && btns[0] !== info) btns[0].onclick = async (e) => {
         e.stopPropagation();
         resumeTitle(t);
     };
+    h.querySelectorAll('.hero-arr').forEach(a => a.onclick = (e) => {
+        e.stopPropagation();
+        _heroIdx = (_heroIdx + (+a.dataset.d) + count) % count;
+        _heroShow(pstate());
+    });
 }
 // hero Resume / CW: series jumps straight to the current episode's page (auto-plays the
 // top stream), movies play directly — same as the Firestick's resumeFromCw
@@ -1356,7 +1474,7 @@ async function resumeTitle(t) {
     const st = pstate();
     const last = (st.cwlast || {})[t.id];
     if (t.type === 'series' && last?.includes(':')) {
-        const meta = (await j(`${CINE}/meta/series/${t.id}.json`))?.meta;
+        const meta = await airShift((await j(`${CINE}/meta/series/${t.id}.json`))?.meta);
         const [, s, e] = last.split(':');
         const ep = (meta?.videos || []).find(v => v.season == s && v.episode == e);
         if (meta && ep) { episodePage({ id: t.id, type: 'series' }, meta, ep, true); return; }
@@ -1365,6 +1483,7 @@ async function resumeTitle(t) {
     if (t.type !== 'series') pickStream(t.id, t.name, true);
 }
 let cwHolderEl = null;
+let top10HolderEl = null;   // Top 10 holder — Settings toggle empties/refills it in place (AJ Nov 15)
 function paintContinueRow() {
     if (!cwHolderEl || !cwHolderEl.isConnected) return;
     const st = pstate();
@@ -1403,6 +1522,9 @@ function paintContinueRow() {
 // Netflix's Top 10 shelf — giant ghost rank numeral tucked behind each poster, same
 // trending/day movie+show interleave as the TV app, never profile-shuffled
 async function top10Row(holder) {
+    // per-profile opt-out (TV top10Row parity, AJ Nov 15 "turning off top 10 its still
+    // there") — gated at the BUILDER so EVERY paint path honors it, incl. future ones
+    if (!PREF('top10', true)) { holder.innerHTML = ''; return; }
     const [mv, tv] = await Promise.all([
         tmdbRow('movie', 'trending/movie/day', 1),
         tmdbRow('tv', 'trending/tv/day', 1),
@@ -1478,9 +1600,11 @@ async function home() {
     // Continue Watching lives in a STABLE holder so the 60s sync can repaint just it
     cwHolderEl = document.createElement('div'); rows.appendChild(cwHolderEl);
     paintContinueRow();
-    // Top 10 rides right under Continue Watching (leads the page when there's no CW)
-    const top10Holder = document.createElement('div'); rows.appendChild(top10Holder);
-    top10Row(top10Holder);
+    // Top 10 rides right under Continue Watching (leads the page when there's no CW);
+    // holder kept module-level so the Settings toggle can yank/repaint it live (AJ Nov 15
+    // "it came back" — Home isn't rebuilt on nav, so OFF must bite the live DOM)
+    top10HolderEl = document.createElement('div'); rows.appendChild(top10HolderEl);
+    top10Row(top10HolderEl);
     // rows land IN CATALOG ORDER via pre-placed slots (async fills used to append in
     // completion order — the board shuffled on every load and looked nothing like the TV).
     // Each slot opens as a SKELETON (label + gray tiles) so the whole page exists and
@@ -1737,7 +1861,7 @@ let detailBackTo = 'home';   // where ‹ Back on a detail page returns to (AJ S
 async function detail(t) {
     const imdb = await resolveImdb(t);
     if (!imdb) return;
-    const meta = (await j(`${CINE}/meta/${t.type}/${imdb}.json`))?.meta;
+    const meta = await airShift((await j(`${CINE}/meta/${t.type}/${imdb}.json`))?.meta);
     if (!meta) return;
     // remember the list we came FROM (home/search/discover/library) so Back returns there
     // with its results intact — but not detail/episode/person, which aren't return targets
@@ -3066,7 +3190,10 @@ const PREF_MAP = { autonext: 'autoplayNext', subscale: 'subScale', blur: 'blurUn
                    // hide fully-watched titles from the library grid; which tab the app
                    // opens on; new-episode push toggle (server gates PHONE push on this
                    // synced pref — flipping it here reaches the user's phone) — all synced
-                   hidewatched: 'hideWatched', landingtab: 'landingTab', notifnew: 'notifNewEps' };
+                   hidewatched: 'hideWatched', landingtab: 'landingTab', notifnew: 'notifNewEps',
+                   // Home Top 10 row + guide 🔴 sports sections (TV parity, AJ Nov 15) — the
+                   // SAME synced names the Android app reads, so a flip follows you across devices
+                   top10: 'top10Row', guidesports: 'guideSports' };
 // the 8 accent choices, identical to the Android app
 const ACCENTS = [['Royal (default)', '#7B5BF5'], ['Gold', '#E0A400'], ['Ocean', '#2E86F5'],
                  ['Crimson', '#E23B4E'], ['Emerald', '#1DB954'], ['Pink', '#E754A6'],
@@ -3086,10 +3213,13 @@ const SETPREF = (k, v) => {
 };
 // account prefs win on pull (a setting flipped on the Firestick shows up here)
 function applyAccountPrefs() {
-    const pr = pstate().prefs || S.state.prefs;
-    if (!pr) return;
+    const pr = pstate().prefs || S.state.prefs || {};
     for (const [loc, acc] of Object.entries(PREF_MAP))
         if (pr[acc] !== undefined) localStorage.setItem('ckp-' + loc, JSON.stringify(pr[acc]));
+    // default-ON per-profile toggles (AJ Nov 15): a profile that never flipped one must NOT
+    // inherit the cached value the LAST profile left in localStorage — undefined = back to ON
+    for (const loc of ['top10', 'guidesports'])
+        if (pr[PREF_MAP[loc]] === undefined) localStorage.removeItem('ckp-' + loc);
     applyAccent();   // repaint the theme whenever prefs land (load, profile switch, cross-device sync)
 }
 function accentPicker() {
@@ -3181,6 +3311,27 @@ function renderSettings() {
     body.appendChild(settingRow('Reorder shelves', 'Set the order they show on Home', () => shelfReorder()));
     body.appendChild(toggleRow('Hide watched titles', () => PREF('hidewatched', false),
         () => SETPREF('hidewatched', !PREF('hidewatched', false))));
+    // Top 10 Today row toggle (TV parity, AJ Nov 15) — addon users only (a home row the
+    // tracker shell never has). OFF yanks the LIVE row now — Home isn't rebuilt on nav,
+    // so waiting for the next home() would bring it back ("it came back").
+    if (hasService()) body.appendChild(toggleRow('Top 10 Today on Home', () => PREF('top10', true), () => {
+        SETPREF('top10', !PREF('top10', true));
+        if (!top10HolderEl || !top10HolderEl.isConnected) return;
+        if (PREF('top10', true)) top10Row(top10HolderEl); else top10HolderEl.innerHTML = '';
+    }));
+    // "Live sports in Guide" (TV guideSports parity, AJ Nov 15): hides the 🔴 per-sport LIVE
+    // sections inside the canvas guide. liveok gate ("doesn't matter if they don't have live
+    // tv"): VOD-only plans never see a toggle for a guide their plan locks — row lands async
+    // into a pre-placed holder so the probe never stalls the page. Display-only either way:
+    // live access is decided server-side on every request, this row can never grant anything.
+    if (hasService() && S.liveCat) {
+        const lsHolder = document.createElement('div'); body.appendChild(lsHolder);
+        lvLiveOk().then(ok => {
+            if (ok && lsHolder.isConnected) lsHolder.appendChild(
+                toggleRow('Live sports in Guide', () => PREF('guidesports', true),
+                    () => SETPREF('guidesports', !PREF('guidesports', true))));
+        }).catch(() => {});
+    }
     // cycles Home → Live TV → Library; stored as the nav key — updates in place, no re-render
     const LANDING = [['home', 'Home'], ['livetv', 'Live TV'], ['library', 'Library']];
     const landRow = settingRow('Open app on',
