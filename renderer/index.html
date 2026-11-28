@@ -2,9 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>CouchKing</title>
-<link rel="stylesheet" href="style.css?v=1121a">
+<!-- Add-to-Home-Screen: manifest + icons so the installed app shows the CouchKing logo,
+     opens standalone (no browser chrome), and picks up the brand colors. (AJ Sep 22) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0C0B14">
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CouchKing TV">
+<link rel="stylesheet" href="style.css?v=313d81dfc7">
 </head>
 <body>
 <div id="app">
@@ -104,9 +114,9 @@
   </div>
 
 </div>
-<script src="ck-web.js?v=1121a"></script>
-<script src="catalog.js?v=1121a"></script>
-<script src="guide2.js?v=1121a"></script>
-<script src="app.js?v=1121a"></script>
+<script src="ck-web.js?v=77ef30edd1"></script>
+<script src="catalog.js?v=5dd6eec2e4"></script>
+<script src="guide2.js?v=08c1b68563"></script>
+<script src="app.js?v=e7fa88a063"></script>
 </body>
 </html>

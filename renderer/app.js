@@ -4,6 +4,10 @@
 const TMDB = 'b05e998c589bf1393c1059bd1d4c5895';
 const CINE = 'https://v3-cinemeta.strem.io';
 let SERVICE = 'https://couchking.app';
+// SERIES meta comes from our own merge endpoint, not Cinemeta directly (Nov 23, 7 Little
+// Johnstons: Cinemeta froze at S5 while the show has 18 seasons — /ckmeta backfills the
+// missing episodes from TMDB server-side). Movies stay on Cinemeta (no episode lists to lose).
+const ckMeta = (type, id) => type === 'series' ? `${SERVICE}/ckmeta/series/${id}.json` : `${CINE}/meta/${type}/${id}.json`;
 let S = { email: '', token: '', user: '', useg: '', subKey: '', addons: [], state: {}, guest: false, access: null };
 // live identity for the in-window player's 🛟 Report a problem (ck-web.js reads window.ckIdent
 // at send time): a getter so it always reflects the ACTIVE profile without touching the four
@@ -233,7 +237,7 @@ function lvBanner(msg, title = 'Live TV locked') {
     scrim.onclick = (e) => { if (e.target === scrim) scrim.remove(); };
     document.body.appendChild(scrim); ok.focus();
 }
-async function _lvPlayCh(id, name, guideList, busyEl) {
+async function _lvPlayCh(id, name, guideList, busyEl, adoptMedia) {
     busyEl?.classList.add('busy');
     try {
         // in-player Guide = the WHOLE guide (AJ Sep 17): ★ Favorites, recently watched,
@@ -321,6 +325,7 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
         }
         try { localStorage.setItem('ck-lastlive', JSON.stringify({ id, name, logo: ci?.logo || '', ts: Date.now() })); } catch {}
         await ckPlay({ live: true, url: urls[0] || '', title: name, backups: urls.slice(1), tsUrl,
+                       adoptMedia: adoptMedia || null,
                        logo: ci?.logo || '', now: nowP?.t || '',
                        chid: id, fav: _lvIsFav(id), isFav: _lvIsFav,
                        lastCh: _lastCh, lastName: _lastName, lastLogo: _lastLogo,
@@ -336,6 +341,370 @@ async function _lvPlayCh(id, name, guideList, busyEl) {
                        // reflect NOW, not tune time (AJ Sep 24)
                        onClose: () => { if (page === 'livetv') livetvPage(); } });
     } finally { busyEl?.classList.remove('busy'); }
+}
+// ---- MULTIVIEW (AJ Nov 27, WEB only): up to 4 live channels at once in a 2x2 grid.
+// Every tile is a REAL live stream = its own HLS session; the server's Live TV gate counts
+// by IP so four tiles from one browser still hold ONE slot — but it IS 4 streams of
+// bandwidth, which the header note says out loud. Click a tile = audio follows it (the
+// rest mute, 🔊/🔇 badges show it), double-click = that channel in the normal fullscreen
+// player, ✕ clears a tile, Esc or Close exits back to the Live TV page. Soft client cap
+// = the 4 grid slots; no server changes.
+let _mv = null;   // the open multiview session (one at a time)
+async function _mvHlsLib() {   // same self-hosted-first hls.js loader livePlay uses
+    if (window.Hls) return true;
+    await new Promise((res, rej) => {
+        const sc = document.createElement('script'); sc.src = 'hls.min.js'; sc.onload = res;
+        sc.onerror = () => { const c = document.createElement('script');
+            c.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js';
+            c.onload = res; c.onerror = rej; document.head.appendChild(c); };
+        document.head.appendChild(sc);
+    }).catch(() => {});
+    return !!window.Hls;
+}
+const _mvdbg = (t) => { try { fetch('/a/player/beat?k=&u=mvdbg-' + t + '&d=dbg', { keepalive: true }); } catch {} };
+async function lvMultiview(seedId, seedName, seedLogo, opts) {
+    if (_mv) { _mvdbg('REENTRY-BLOCKED'); return; }
+    // under-mode (entered FROM the player): the single player keeps playing on top while
+    // the seed tile spins up underneath; opts.onReady fires when the tile is actually
+    // painting so the caller can close the player then — swap, not spinner (AJ Nov 27).
+    const under = !!(opts && opts.under);
+    // proxy/under re-entries must NOT stop the live player — it IS the host we're adopting
+    // (AJ Nov 28: second ⊞ press killed the host and re-tuned from scratch)
+    if (!under && !(opts && opts.proxy)) { try { window.ckStop?.(); } catch {} }
+    const _mvCleanup = [];
+    const root = document.createElement('div');
+    root.id = 'lv-multiview';
+    root.innerHTML = `
+        <div class="mv-top">
+          <span class="mv-title">⊞ Multiview</span>
+          <span class="mv-note">click a tile for sound · double-click for fullscreen · ✕ clears · heads up: multiview uses more bandwidth</span>
+          <button class="mv-close">✕ Close</button>
+        </div>
+        <div class="mv-grid"></div>`;
+    const gridEl = root.querySelector('.mv-grid');
+    const tiles = [];
+    _mv = { el: root, tiles };
+    const kill = (t) => {   // full engine teardown for one tile — safe to call twice
+        if (t.proxy) {   // external host (the zombie live player) owns this stream — tell it
+            const px = t.proxy; t.proxy = null; t.video = null;
+            try { px.close(); } catch {}
+            t.ch = t.name = t.logo = t.ts = ''; t.sources = []; t.si = 0; t.tuned = t.failed = false;
+            return;
+        }
+        clearTimeout(t.dog); t.dog = 0; t.gen++;
+        try { t.hls?.destroy(); } catch {} t.hls = null;
+        try { t.mp?.destroy(); } catch {} t.mp = null;
+        if (t.video) { try { t.video.pause(); t.video.removeAttribute('src'); t.video.load(); } catch {} t.video.remove(); t.video = null; }
+        t.ch = t.name = t.logo = t.ts = ''; t.sources = []; t.si = 0; t.tuned = t.failed = false;
+    };
+    const paint = (t) => {   // tile chrome follows its state: empty / tuning / playing / failed
+        t.el.querySelector('.mv-empty').classList.toggle('hidden', !!t.ch);
+        t.el.querySelector('.mv-bar').classList.toggle('hidden', !t.ch);
+        t.el.querySelector('.mv-name').textContent = t.name || '';
+        t.el.querySelector('.mv-spin').classList.toggle('hidden', !t.ch || t.tuned || t.failed);
+        const msg = t.el.querySelector('.mv-msg');
+        msg.classList.toggle('hidden', !t.failed);
+        if (!t.failed) msg.textContent = '';
+    };
+    const focus = (i) => {   // one tile owns the audio; everyone else mutes
+        for (let j = 0; j < tiles.length; j++) {
+            const t = tiles[j], on = j === i && !!t.ch && !t.failed;
+            if (t.video) t.video.muted = !on;
+            t.el.querySelector('.mv-aud').textContent = on ? '🔊' : '🔇';
+            t.el.classList.toggle('mv-on', on);
+        }
+    };
+    const fail = (t, msg) => {
+        const { ch, name, logo } = t;
+        kill(t);
+        t.ch = ch; t.name = name; t.logo = logo; t.failed = true;   // keep the label, offer re-pick
+        paint(t); t.el.querySelector('.mv-msg').textContent = msg || 'Channel is down right now';
+        focus(tiles.findIndex(x => x.ch && !x.failed));
+    };
+    // ---- per-tile engine: native HLS (Safari) or hls.js, backup-walk on fatal error,
+    // 12s no-frame watchdog, .ts hub via mpegts.js as the last rung (livePlay's ladder, mini)
+    const playTs = async (t, gen) => {
+        if (!window.mpegts) await new Promise((res) => {
+            const sc = document.createElement('script'); sc.src = 'mpegts.min.js';
+            sc.onload = res; sc.onerror = res; document.head.appendChild(sc);
+        });
+        if (gen !== t.gen || !_mv) return;
+        if (!window.mpegts?.isSupported?.() || !t.video) return fail(t, 'This channel is down right now');
+        const mp = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url: t.ts });
+        mp.attachMediaElement(t.video); mp.load(); t.video.play().catch(() => {});
+        mp.on(window.mpegts.Events.ERROR, () => { try { mp.destroy(); } catch {}
+            if (t.mp === mp) { t.mp = null; if (gen === t.gen) fail(t, 'This channel is down right now'); } });
+        t.mp = mp;
+    };
+    const armDog = (t, gen) => { clearTimeout(t.dog); t.dog = setTimeout(() => {
+        if (gen !== t.gen || t.tuned || !_mv) return;
+        t.si++; attach(t, gen);
+    }, 12000); };
+    const attach = async (t, gen) => {
+        if (gen !== t.gen || !_mv || !t.video) return;
+        try { t.hls?.destroy(); } catch {} t.hls = null;
+        const u = t.sources[t.si];
+        if (!u) {   // HLS chain exhausted (or 24/7 skip) → the continuous .ts hub feed
+            if (t.ts) { const ts = t.ts; t.ts = ''; return playTs(t, gen); }   // one shot
+            return fail(t, 'This channel is down right now');
+        }
+        armDog(t, gen);
+        const v = t.video;
+        if (v.canPlayType('application/vnd.apple.mpegurl')) {
+            v.src = u;
+            v.onerror = () => { if (gen === t.gen && !t.tuned) { t.si++; attach(t, gen); } };
+            return;
+        }
+        if (!await _mvHlsLib()) return fail(t, 'Player failed to load');
+        if (gen !== t.gen || !_mv) return;
+        const h = new window.Hls({ maxBufferLength: 30, backBufferLength: 30,
+            subtitleDisplay: false, enableCEA708Captions: false, enableWebVTT: false, enableIMSC1: false });
+        h.on(window.Hls.Events.ERROR, (_, d) => {
+            if (!d.fatal) return;
+            try { h.destroy(); } catch {}
+            if (gen !== t.gen) return;
+            t.hls = null; t.si++; attach(t, gen);
+        });
+        h.loadSource(u); h.attachMedia(v);
+        t.hls = h;
+    };
+    const tune = async (i, id, name, logo) => {
+        const t = tiles[i];
+        kill(t);
+        const gen = t.gen;
+        t.ch = id; t.name = name; t.logo = logo || '';
+        paint(t);
+        const st = await _lvTune(id).catch(() => []);
+        if (gen !== t.gen || !_mv) return;
+        const urls = st.filter(x => !x.ts).map(x => x.url);
+        t.ts = st.find(x => x.ts)?.url || '';
+        // 24/7 loop channels ARE the broken-HLS-session class — straight to the hub feed
+        // (same rule as the single player)
+        t.sources = (t.ts && /^cklive:(en-)?24-7-/.test(String(id))) ? [] : urls;
+        t.si = 0;
+        if (!t.sources.length && !t.ts) return fail(t, 'Channel is offline right now');
+        // ACCESS GATE, same reasons the single player shows (per-key, identical on every source)
+        try {
+            const gr = await fetch(t.sources[0] || t.ts, { method: 'GET' });
+            if (gr.status === 429 || gr.status === 503 || gr.status === 403) {
+                const reason = (await gr.text().catch(() => '')).trim();
+                return fail(t, reason || (gr.status === 429
+                    ? 'All your Live TV device slots are in use.'
+                    : gr.status === 503 ? 'Live TV is at full capacity — try again in a minute.'
+                    : 'Live TV isn’t part of your plan.'));
+            }
+            try { gr.body?.cancel?.(); } catch {}   // status only — don't download the stream
+        } catch {}
+        if (gen !== t.gen || !_mv) return;
+        const v = document.createElement('video');
+        v.autoplay = true; v.playsInline = true; v.muted = true;
+        // live = captionless, exactly like the single player (TV 2.0.258 parity)
+        const killCc = () => { try { for (const tt of v.textTracks) if (tt.mode !== 'disabled') tt.mode = 'disabled'; } catch {} };
+        killCc(); try { v.textTracks.addEventListener('addtrack', killCc); } catch {}
+        v.addEventListener('playing', () => { if (gen === t.gen) { t.tuned = true; clearTimeout(t.dog); paint(t); } });
+        t.video = v;
+        t.el.prepend(v);
+        await attach(t, gen);
+        focus(i);   // the newest tile gets the audio
+    };
+    const clear = (i) => {
+        const t = tiles[i];
+        const hadFocus = t.el.classList.contains('mv-on');
+        kill(t); paint(t);
+        if (hadFocus) focus(tiles.findIndex(x => x.ch && !x.failed));
+    };
+    // ---- channel PICKER: the guide's channel list (★ Favorites first, then sections),
+    // searchable — click a row = it plays in the slot you came from
+    let pickEl = null;
+    const closePick = () => { pickEl?.remove(); pickEl = null; };
+    const picker = async (i) => {
+        closePick();
+        pickEl = document.createElement('div');
+        pickEl.className = 'mv-picker';
+        pickEl.innerHTML = `<div class="mv-pick-panel">
+            <div class="mv-pick-head"><b>Pick a channel</b><button class="mv-pick-close">✕</button></div>
+            <input type="search" placeholder="🔎 Search channels">
+            <div class="mv-pick-list"><div class="lv-loading">Loading channels…</div></div></div>`;
+        root.appendChild(pickEl);
+        pickEl.onclick = (e) => { if (e.target === pickEl) closePick(); };
+        pickEl.querySelector('.mv-pick-close').onclick = closePick;
+        const list = pickEl.querySelector('.mv-pick-list');
+        const inp = pickEl.querySelector('input');
+        inp.focus();
+        const gd = await lvGuideData().catch(() => null);
+        if (!pickEl || !_mv) return;
+        if (!gd?.channels?.length) { list.innerHTML = '<div class="lv-loading">Guide is loading — try again in a few seconds.</div>'; return; }
+        const nowMs = Date.now();
+        const nowOf = c => (c.progs?.find(p => p.s <= nowMs && p.e > nowMs) || {}).t || '';
+        const rows = [];
+        if (gd.favChannels?.length) {
+            rows.push({ hdr: '★ Favorites' });
+            for (const c of gd.favChannels) rows.push({ id: 'cklive:' + c.id, name: c.name, logo: c.logo || '', now: nowOf(c) });
+        }
+        let lastSec = null;
+        for (const c of gd.channels) {
+            const sec = c.section || c.genre || 'More channels';
+            if (sec !== lastSec) { lastSec = sec; rows.push({ hdr: sec }); }
+            rows.push({ id: 'cklive:' + c.id, name: c.name, logo: c.logo || '', now: nowOf(c) });
+        }
+        const paintList = (q) => {
+            list.innerHTML = '';
+            const qq = (q || '').toLowerCase();
+            let shown = 0;
+            for (const r of rows) {
+                if (r.hdr) {   // headers only make sense unfiltered
+                    if (!qq) { const h = document.createElement('div'); h.className = 'mv-pick-hdr'; h.textContent = r.hdr; list.appendChild(h); }
+                    continue;
+                }
+                if (qq && !(r.name.toLowerCase().includes(qq) || (r.now || '').toLowerCase().includes(qq))) continue;
+                if (++shown > 500) break;   // search narrows it — no 600-row DOM dumps
+                const el = document.createElement('div');
+                el.className = 'mv-pick-row';
+                el.innerHTML = `<img loading="lazy"><b></b><span></span>`;
+                const im = el.querySelector('img');
+                if (r.logo) { im.src = r.logo; im.onerror = () => im.remove(); } else im.remove();
+                el.querySelector('b').textContent = r.name;
+                el.querySelector('span').textContent = r.now || '';
+                el.onclick = () => { closePick(); tune(i, r.id, r.name, r.logo); };
+                list.appendChild(el);
+            }
+            if (!shown) list.innerHTML = '<div class="lv-loading">No channels match.</div>';
+        };
+        paintList('');
+        inp.oninput = () => { clearTimeout(inp._t); inp._t = setTimeout(() => paintList(inp.value.trim()), 150); };
+    };
+    // ---- the 4 slots
+    for (let i = 0; i < 4; i++) {   // soft client cap: 4 simultaneous live streams
+        const el = document.createElement('div');
+        el.className = 'mv-tile';
+        el.innerHTML = `
+            <div class="mv-empty"><span class="mv-plus">＋</span><span>Add channel</span></div>
+            <div class="mv-spin hidden"></div>
+            <div class="mv-msg hidden"></div>
+            <div class="mv-bar hidden"><span class="mv-name"></span><span class="mv-aud">🔇</span><button class="mv-x" title="Clear this tile">✕</button></div>`;
+        gridEl.appendChild(el);
+        const t = { el, ch: '', name: '', logo: '', ts: '', video: null, hls: null, mp: null,
+                    sources: [], si: 0, gen: 0, dog: 0, tuned: false, failed: false };
+        tiles.push(t);
+        el.querySelector('.mv-x').onclick = (e) => { e.stopPropagation(); clear(i); };
+        el.onclick = (e) => {
+            if (e.target.closest('.mv-x')) return;
+            if (t.ch && !t.failed) focus(i); else picker(i);   // playing = take audio, else pick
+        };
+        el.ondblclick = (e) => {
+            if (!t.ch || t.failed || e.target.closest('.mv-x')) return;
+            if (t.proxy) {   // host player takes back over, instantly — nothing re-tunes
+                const px = t.proxy; t.proxy = null; t.video = null;
+                _mv = null; closePick(); document.removeEventListener('keydown', onKey);
+                try { root.remove(); } catch {} document.body.style.overflow = '';
+                _mvCleanup.splice(0).forEach(f => { try { f(); } catch {} });
+                try { px.fullscreen(); } catch {}
+                return;
+            }
+            const { ch, name } = t;
+            // TRUE HANDOFF (AJ Nov 28 "click still does it"): the player ADOPTS this tile's
+            // already-playing <video> + engine — same pixels, zero re-tune. Null our refs so
+            // the grid teardown cannot destroy what the player now owns.
+            const media = { video: t.video, hls: t.hls, mp: t.mp };
+            t.video = null; t.hls = null; t.mp = null;
+            tiles.forEach((o) => { if (o !== t) kill(o); });
+            _mv = null;
+            closePick();
+            document.removeEventListener('keydown', onKey);
+            // the tile KEEPS PLAYING right where it is — the player opens TRANSPARENT on
+            // top and adopts this exact element without ever moving it (moving resets Safari
+            // playback). The grid shell stays as the element's home until the player closes,
+            // then this watcher tears everything down.
+            root.classList.add('mv-handoff');
+            t.el.classList.add('mv-full');
+            try { if (media.video) media.video.muted = false; } catch {}
+            _lvPlayCh(ch, name, [], null, media);   // fullscreen, adopting the live stream
+            let sawPlayer = false;
+            const w8 = setInterval(() => {
+                const up = !!document.getElementById('web-player');
+                if (up) { sawPlayer = true; return; }
+                if (!sawPlayer) return;             // player still booting
+                clearInterval(w8);                  // player closed — destroy what it adopted
+                try { media.hls?.destroy(); } catch {}
+                try { media.mp?.destroy(); } catch {}
+                try { media.video.pause(); media.video.removeAttribute('src'); media.video.load(); } catch {}
+                try { root.remove(); } catch {}
+                document.body.style.overflow = '';
+            }, 800);
+            setTimeout(() => { if (!sawPlayer) { try { clearInterval(w8); root.remove(); } catch {} } }, 15000);
+        };
+    }
+    const onKey = (e) => {
+        if (e.key !== 'Escape') return;
+        if (pickEl) { closePick(); return; }   // step-out ladder: picker first, then multiview
+        exit();
+    };
+    const exit = () => {
+        if (!_mv) return;
+        _mv = null;
+        closePick();
+        const _pxT = tiles.find(x => x.proxy);
+        if (_pxT) { const px = _pxT.proxy; _pxT.proxy = null; _pxT.video = null; try { px.fullscreen(); } catch {} }
+        _mvCleanup.splice(0).forEach(f => { try { f(); } catch {} });
+        tiles.forEach(kill);
+        document.removeEventListener('keydown', onKey);
+        root.remove();
+        document.body.style.overflow = '';
+    };
+    root.querySelector('.mv-close').onclick = exit;
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(root);
+    document.body.style.overflow = 'hidden';
+    _mvdbg(opts && opts.proxy ? (seedId ? 'GRID-PROXY' : 'GRID-PROXY-NOSEED') : seedId ? 'GRID-TUNE0' : 'GRID-EMPTY');
+    if (opts && opts.proxy && seedId) {
+        // PROXY SEED (AJ Nov 28 "needs to be smooth both ways"): the live player stays alive
+        // as an invisible host; its playing <video> just RESIZES into this tile's rect. One
+        // stream, zero re-tune, both directions instant. The tile owns focus/audio/layout;
+        // the host owns the engine.
+        const t = tiles[0], px = opts.proxy;
+        // the host video lives inside the PLAYER's stacking context (z100) — the grid must
+        // sit BELOW it (z80) so the video shows through its tile hole; the transparent,
+        // click-through host covers us but everything non-video stays visible.
+        root.style.zIndex = '80';
+        t.ch = seedId; t.name = seedName || ''; t.logo = seedLogo || '';
+        t.proxy = px; t.video = px.el; t.tuned = true;
+        paint(t);
+        const placeNow = () => { if (t.proxy) { try { px.place(t.el.getBoundingClientRect()); } catch {} } };
+        requestAnimationFrame(placeNow); setTimeout(placeNow, 120);
+        window.addEventListener('resize', placeNow);
+        _mvCleanup.push(() => window.removeEventListener('resize', placeNow));
+        focus(0);
+    } else if (opts && opts.adopt && opts.adopt.video && seedId) {
+        // ADOPTION (AJ Nov 27, "shows picture then no sound then loads again"): the single
+        // player hands over its ALREADY-PLAYING <video> + engine — zero re-tune, the same
+        // pixels keep flowing. We take ownership of teardown (kill() destroys t.hls/t.mp
+        // and removes t.video exactly like a tuned tile).
+        const t = tiles[0], a = opts.adopt;
+        t.ch = seedId; t.name = seedName || ''; t.logo = seedLogo || '';
+        t.hls = a.hls || null; t.mp = a.mp || null; t.video = a.video; t.tuned = true;
+        a.video.controls = false; a.video.muted = false;
+        a.video.classList.remove?.();
+        t.el.prepend(a.video);
+        paint(t);
+        focus(0);
+        try { a.video.play?.().catch(() => {}); } catch {}
+    } else if (seedId) tune(0, seedId, seedName || '', seedLogo || '');
+    if (under) {
+        root.style.zIndex = '90';   // player (z100) stays visible on top while tile 0 loads
+        let fired = false;
+        const done = () => {
+            if (fired || !_mv) return; fired = true;
+            root.style.zIndex = '';
+            try { focus(0); } catch {}          // carry the sound over
+            try { opts.onReady?.(); } catch {}
+        };
+        const chk = setInterval(() => {
+            const v = tiles[0]?.video;
+            if (v && !v.paused && v.readyState >= 3) { clearInterval(chk); done(); }
+            if (!_mv) clearInterval(chk);       // user bailed mid-handoff
+        }, 200);
+        setTimeout(() => { clearInterval(chk); done(); }, 6000);   // never strand the player
+    }
 }
 // ---- CLASSIC GUIDE GRID (AJ Sep 17 "like im on a classic tv box"): sticky channel column,
 // 6h timeline, program blocks, red now-line, ★ favorites pinned on top, Continue Watching
@@ -841,6 +1210,15 @@ async function livetvPage() {
         b.onclick = () => { lvGenre = g; livetvPage(); };
         chips.appendChild(b);
     }
+    // ⊞ MULTIVIEW (Nov 27, AJ "up to 4 channels at the same time" — web first): opens the
+    // 2x2 grid overlay; not a genre chip, it doesn't change lvGenre or re-render the page.
+    {
+        const mb = document.createElement('button');
+        mb.className = 'lv-chip mv-chip';
+        mb.textContent = '⊞ Multiview';
+        mb.onclick = () => { if (window._ckMvHost) return window._ckMvHost(); lvMultiview('', '', ''); };
+        chips.appendChild(mb);
+    }
     // SEARCH channels + shows (AJ Sep 17): server matches channel names AND anything in
     // the next 24h of guide. Renders into the grid only — the input never rebuilds, so
     // typing keeps focus.
@@ -1164,7 +1542,7 @@ async function cineRow(type, id, genre, pages = 1) {
 async function idsRow(type, ids) {
     const metas = await Promise.all(ids.map(async id => {
         const m = (await j(`${CINE}/meta/movie/${id}.json`))?.meta
-            || await airShift((await j(`${CINE}/meta/series/${id}.json`))?.meta);
+            || await airShift((await j(ckMeta('series', id)))?.meta);
         if (m) return m;
         // Cinemeta doesn't know far-future titles yet (VisionQuest) — TMDB does; the tile
         // still shows in watch order, clicking gets the standard unaired treatment (Sep 17)
@@ -1302,7 +1680,7 @@ function saveCwBoosts() {
 async function newEpisodeCount(titleId) {
     if (titleId in newEpCache) return newEpCache[titleId];
     const st = pstate();
-    const meta = await airShift((await j(`${CINE}/meta/series/${titleId}.json`))?.meta);
+    const meta = await airShift((await j(ckMeta('series', titleId)))?.meta);
     const eps = (meta?.videos || []).filter(v => v.season > 0)
         .sort((a, b) => a.season - b.season || a.episode - b.episode);
     if (!eps.length) { newEpAirCache[titleId] = 0; return (newEpCache[titleId] = 0); }
@@ -1435,7 +1813,7 @@ async function _heroShow(st) {
     const t = _heroItems[_heroIdx]; if (!t) return;
     let bg = _heroBgCache.get(t.id);
     if (bg === undefined) {
-        const meta = (await j(`${CINE}/meta/${t.type}/${t.id}.json`))?.meta;
+        const meta = (await j(ckMeta(t.type, t.id)))?.meta;
         bg = meta?.background || t.backdrop || t.poster || '';
         _heroBgCache.set(t.id, bg);
     }
@@ -1474,7 +1852,7 @@ async function resumeTitle(t) {
     const st = pstate();
     const last = (st.cwlast || {})[t.id];
     if (t.type === 'series' && last?.includes(':')) {
-        const meta = await airShift((await j(`${CINE}/meta/series/${t.id}.json`))?.meta);
+        const meta = await airShift((await j(ckMeta('series', t.id)))?.meta);
         const [, s, e] = last.split(':');
         const ep = (meta?.videos || []).find(v => v.season == s && v.episode == e);
         if (meta && ep) { episodePage({ id: t.id, type: 'series' }, meta, ep, true); return; }
@@ -1861,7 +2239,7 @@ let detailBackTo = 'home';   // where ‹ Back on a detail page returns to (AJ S
 async function detail(t) {
     const imdb = await resolveImdb(t);
     if (!imdb) return;
-    const meta = await airShift((await j(`${CINE}/meta/${t.type}/${imdb}.json`))?.meta);
+    const meta = await airShift((await j(ckMeta(t.type, imdb)))?.meta);
     if (!meta) return;
     // remember the list we came FROM (home/search/discover/library) so Back returns there
     // with its results intact — but not detail/episode/person, which aren't return targets

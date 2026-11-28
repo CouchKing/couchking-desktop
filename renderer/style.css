@@ -788,3 +788,48 @@ select:focus, select:hover { border-color:var(--accent); }
   .wpg-head { max-width:calc(100% - 50vw - 16px); }
   .wpg-head b { font-size:15px; }
 }
+
+/* ===== ⊞ Multiview (Nov 27) ===== */
+#lv-multiview{position:fixed;inset:0;z-index:900;background:#0b0b10;display:flex;flex-direction:column}
+.mv-top{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid #262630}
+.mv-title{font-weight:800;font-size:17px}
+.mv-note{color:#9a9aa4;font-size:12.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mv-close{background:#26232e;border:1px solid #3a3a44;color:#fff;border-radius:14px;padding:6px 14px;cursor:pointer;font-size:13.5px}
+.mv-close:hover{border-color:#a855f7}
+.mv-grid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px;padding:6px;min-height:0}
+.mv-tile{position:relative;background:#121218;border:2px solid #262630;border-radius:10px;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;min-height:0}
+.mv-tile.mv-on{border-color:#a855f7;box-shadow:0 0 0 1px #a855f7}
+.mv-tile video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+.mv-empty{display:flex;flex-direction:column;align-items:center;gap:8px;color:#9a9aa4;font-size:14px}
+.mv-plus{font-size:42px;line-height:1;color:#a855f7}
+.mv-spin{position:absolute;width:34px;height:34px;border:3px solid #3a3a44;border-top-color:#a855f7;border-radius:50%;animation:mvspin .8s linear infinite}
+@keyframes mvspin{to{transform:rotate(360deg)}}
+.mv-msg{position:absolute;inset:auto 10px 42px 10px;text-align:center;color:#ffb4b4;font-size:13px;text-shadow:0 1px 3px #000}
+.mv-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:8px;padding:6px 10px;background:linear-gradient(transparent,rgba(0,0,0,.82));font-size:13px}
+.mv-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;text-shadow:0 1px 3px #000}
+.mv-aud{font-size:15px}
+.mv-x{background:rgba(0,0,0,.45);border:1px solid #3a3a44;color:#fff;border-radius:10px;padding:2px 9px;cursor:pointer}
+.mv-x:hover{border-color:#ff6b6b;color:#ff6b6b}
+.mv-pick-panel{position:fixed;inset:8% 14%;z-index:920;background:#15151c;border:1px solid #3a3a44;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 50px rgba(0,0,0,.6)}
+.mv-pick-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #262630;font-weight:700}
+.mv-pick-head input{flex:1;background:#1c1c22;border:1px solid #3a3a44;border-radius:14px;padding:7px 14px;color:#fff;font-size:14px;outline:none}
+.mv-pick-close{background:#26232e;border:1px solid #3a3a44;color:#fff;border-radius:12px;padding:5px 12px;cursor:pointer}
+.mv-pick-list{flex:1;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.mv-picker{position:fixed;inset:0;z-index:910;background:rgba(0,0,0,.55)}
+.mv-pick-hdr{padding:10px 10px 4px;color:#a855f7;font-weight:800;font-size:12.5px;text-transform:uppercase;letter-spacing:.4px}
+.mv-pick-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:9px;cursor:pointer;font-size:14.5px}
+.mv-pick-row:hover{background:#232330}
+.mv-pick-row img{width:38px;height:38px;object-fit:contain;border-radius:6px;background:#0c0c12}
+.mv-pick-row b{white-space:nowrap}
+.mv-pick-row span{color:#9a9aa4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.mv-chip{border-color:#a855f7 !important;color:#d8b4fe}
+@media (max-width:720px){.mv-grid{grid-template-columns:1fr;grid-template-rows:repeat(4,1fr)}.mv-note{display:none}}
+/* multiview → player smooth handoff */
+#lv-multiview.mv-handoff{z-index:90}
+#lv-multiview.mv-handoff .mv-top{display:none}
+#lv-multiview.mv-handoff .mv-grid{padding:0;gap:0}
+.mv-tile.mv-full{position:absolute;inset:0;border:none;border-radius:0;z-index:1}
+.mv-tile.mv-full .mv-bar{display:none}
+/* multiview zombie-host: live player stays alive invisibly while the grid drives it */
+#web-player.wp-mvmode{background:transparent !important;pointer-events:none}
+#web-player.wp-mvmode .wp-ui,#web-player.wp-mvmode .wp-cue,#web-player.wp-mvmode .wp-hold,#web-player.wp-mvmode .lv-guidepanel{display:none !important}

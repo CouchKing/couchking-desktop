@@ -76,6 +76,7 @@
 
     function closePlayer(fireExit, extra) {
         if (!player) return;
+        window._ckMvHost = null;
         const st = state; state = null;
         const v = player.querySelector('video');
         // read the position BEFORE load() — load() resets currentTime to 0 and used to
@@ -969,7 +970,7 @@
     // for files), no seeking, auto-failover to the channel's backup urls on fatal error.
     async function livePlay({ url, title, backups = [], guide = [], onTune = null, logo = '', now = '',
                               chid = '', fav = false, onFav = null, isFav = null, tsUrl = '',
-                              lastCh = '', lastName = '', lastLogo = '', onClose = null }) {
+                              lastCh = '', lastName = '', lastLogo = '', onClose = null, adoptMedia = null }) {
         closePlayer(false);
         engine = 'web';
         state = { offset: 0, dur: 0 };
@@ -987,6 +988,7 @@
                   <div class="wp-cell"><span>Play / Pause</span><button class="wp-btn wp-pp">${ckIc('pause')}</button></div>
                   <div class="wp-cell"><span>Favorite</span><button class="wp-btn wp-fav">☆</button></div>
                   <div class="wp-cell"><span>Guide</span><button class="wp-btn wp-guide">${ckIc('guide')}</button></div>
+                  <div class="wp-cell"><span>Multiview</span><button class="wp-btn wp-mv" title="Watch up to 4 at once">⊞</button></div>
                   <div class="wp-cell wp-lastcell" style="display:none"><span>Last channel</span><button class="wp-btn wp-last" title="Last channel">↩</button></div>
                   <div class="wp-cell"><span>Pop out</span><button class="wp-btn wp-pip">${ckIc('pip')}</button></div>
                   <div class="wp-cell"><span>Cast</span><button class="wp-btn wp-cast">${ckIc('cast')}</button></div>
@@ -1027,7 +1029,25 @@
         })();
         document.body.appendChild(player);
         document.body.style.overflow = 'hidden';
-        const v = player.querySelector('video');
+        // ADOPTED MEDIA (Nov 28, AJ "click still does it"): multiview hands us its already-
+        // playing <video> + engine — swap it in before anything binds, so the SAME pixels
+        // keep flowing: no re-tune, no cue splash, no silence.
+        if (adoptMedia && adoptMedia.video) {
+            try {
+                // DO NOT reparent — Safari resets native-HLS playback when a <video> moves in
+                // the DOM (the "no sound → loads like normal" AJ saw). The adopted element
+                // stays EXACTLY where it is, promoted to fullscreen in place (fixed, z95);
+                // this player renders transparent on top of it (controls z100) and binds all
+                // its handlers to that element. Zero interruption on every browser.
+                const _ph = player.querySelector('video');
+                _ph.style.display = 'none';
+                player.style.background = 'transparent';
+                const av = adoptMedia.video;
+                av.muted = false; av.controls = false;
+                av.style.cssText += ';position:fixed;inset:0;width:100vw;height:100vh;z-index:95;object-fit:contain;background:#000';
+            } catch {}
+        }
+        const v = (adoptMedia && adoptMedia.video) ? adoptMedia.video : player.querySelector('video');
         // LIVE = NO captions, ever (TV 2.0.258 parity): broadcast feeds carry embedded
         // CEA-608/708 + WebVTT tracks that Safari's native HLS (and hls.js) can auto-show
         // from system caption prefs — force every text track off, including tracks added
@@ -1068,7 +1088,7 @@
             // channel hop: the overlay shows the NEW channel's logo, not the session's first
             // (AJ Sep 26 "doesn't change the logo channel to channel") — no logo = hide it
             if (lg !== undefined) { if (lg) { ovImg.src = lg; ovImg.style.display = ''; } else ovImg.style.display = 'none'; } };
-        showOv(title, now);
+        if (!(adoptMedia && adoptMedia.video)) showOv(title, now);
         v.addEventListener('playing', () => { tuned = true; clearTimeout(dogT); clearTimeout(stallT); ov.style.display = 'none'; });
         // MID-PLAY stall heal (AJ Sep 17 Buffy "freezes after 7 seconds"): panel sessions
         // die under the player — stuck >12s → re-attach = fresh upstream session
@@ -1078,6 +1098,7 @@
             clearTimeout(stallT);
             stallT = setTimeout(() => {
                 if (!state) return;
+                try { fetch('/a/player/beat?k=' + encodeURIComponent(window.S?.subKey || '') + '&u=mvdbg-STALL&d=dbg', { keepalive: true }); } catch {}
                 showOv(player.querySelector('.wp-title').textContent, '');
                 // a stall = the HLS session is sick; a fresh session just dies again.
                 // Straight to the server-side ffmpeg hub feed (continuous, restart-proof).
@@ -1137,15 +1158,20 @@
         };
         const armDog = () => { clearTimeout(dogT); dogT = setTimeout(() => {
             if (tuned || !state) return;
-            if (++si < sources.length) { showOv(player.querySelector('.wp-title').textContent, ''); stopMp(); attach(sources[si]); armDog(); }
+            if (++si < sources.length) { try { fetch('/a/player/beat?k=' + encodeURIComponent(window.S?.subKey || '') + '&u=mvdbg-DOG&d=dbg', { keepalive: true }); } catch {} showOv(player.querySelector('.wp-title').textContent, ''); stopMp(); attach(sources[si]); armDog(); }
             else { ovSpin.style.display = 'none'; ovName.textContent = 'This channel is down right now'; ovNow.textContent = 'Try another one — this one gets benched so it stops showing up';
                    setTimeout(() => { if (!tuned) bail(); }, 3000); }
         }, 12000); };
         // HLS FIRST (Sep 17 rollback: preferring the panel's direct .ts froze EVERY
         // channel — their raw feed is the broken part). .ts hub = fallback only.
-        if (sources[0]) await attach(sources[0]); else if (tsCur) await playTs(tsCur);
+        if (adoptMedia && adoptMedia.video && (adoptMedia.hls || adoptMedia.mp || adoptMedia.video.src || adoptMedia.video.currentSrc)) {
+            if (state) { state.hls = adoptMedia.hls || null; state.mp = adoptMedia.mp || null; }
+            tuned = true; ov.style.display = 'none';
+            try { fetch('/a/player/beat?k=' + encodeURIComponent(window.S?.subKey || '') + '&u=mvdbg-ADOPTED&d=dbg', { keepalive: true }); } catch {}
+            try { v.play().catch(() => {}); } catch {}
+        } else if (sources[0]) await attach(sources[0]); else if (tsCur) await playTs(tsCur);
         armDog();
-        const bail = () => { clearTimeout(dogT); clearTimeout(stallT); stopMp(); try { state?.hls?.destroy(); } catch {} engine = null; closePlayer(false);
+        const bail = () => { window._ckMvHost = null; clearTimeout(dogT); clearTimeout(stallT); stopMp(); try { state?.hls?.destroy(); } catch {} engine = null; closePlayer(false);
             // the guide under the player froze at tune time — let the page re-align its
             // red now-line (AJ Sep 24: "doesn't update unless you update the page")
             try { onClose && onClose(); } catch {} };
@@ -1156,6 +1182,32 @@
         // channel (or the corner video) = back to fullscreen; click another channel = tune
         // with the guide still up. Replaces the old narrow side panel.
         const gp = player.querySelector('.lv-guidepanel');   // legacy panel (kept hidden; CSS reused)
+        // ⊞ MULTIVIEW from the player (AJ Nov 27 "not in player is that normal"): close this
+        // single player and reopen as the 2x2 grid seeded with the channel you were on.
+        const mvb = player.querySelector('.wp-mv');
+        const mvFire = () => {
+            // ZOMBIE-HOST MODE (AJ Nov 28 "smooth both ways"): this player does NOT close —
+            // its chrome hides, its background goes transparent, and its playing <video>
+            // resizes into the grid's seed tile. The grid drives us through this proxy;
+            // fullscreen() = instant return, close() = tile cleared/retuned → real close.
+            const _origCss = v.style.cssText;
+            player.classList.add('wp-mvmode');
+            try { window.lvMultiview?.(curCh, curName, curLogo, { proxy: {
+                el: v,
+                place: (r) => { v.style.cssText = _origCss + ';position:fixed;left:' + (r.left + 4) + 'px;top:' + (r.top + 4) + 'px;width:' + (r.width - 8) + 'px;height:' + (r.height - 8) + 'px;right:auto;bottom:auto;z-index:905;object-fit:contain;background:#000;display:block'; },
+                fullscreen: () => { player.classList.remove('wp-mvmode'); v.style.cssText = _origCss; try { v.muted = false; } catch {} },
+                close: () => { player.classList.remove('wp-mvmode'); v.style.cssText = _origCss; try { bail(); } catch {} },
+            } }); } catch {}
+        };
+        // v2 handoff BENCHED (AJ Nov 28 "def broken") — simple reliable form instead:
+        // close this player, open the grid seeded with the CURRENT channel (fresh tile
+        // tune, honest spinner, no exotic states). Zero-load handoff returns as v2.
+        if (mvb) mvb.onclick = () => {
+            const c = curCh, n = curName, l = curLogo;
+            try { closePlayer(true); } catch {}
+            try { window.lvMultiview?.(c, n, l); } catch {}
+        };
+        window._ckMvHost = null; void mvFire;
         const gbtn = player.querySelector('.wp-guide');
         let fgEl = null;
         const hideFullGuide = () => { if (!fgEl) return;
